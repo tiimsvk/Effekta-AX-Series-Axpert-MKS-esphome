@@ -1,0 +1,2230 @@
+#-------------------------------------------
+# BUG AND REPAIR AND PLANNED
+#-------------------------------------------
+# Added:
+# -1 relay input 230AC, output 2 relay
+# -CT clamp input
+# -BL0939 power meter output
+# -Battery temperature
+# -Segment display? 
+# -Mosfet output 24V
+
+#-------------------------------------------
+# REVISION 
+#-------------------------------------------
+# 2024.05.09 - Fisrt version
+
+#-------------------------------------------
+# SUBTITUTIONS - basic definitions and description of the device
+#-------------------------------------------
+substitutions:
+  friendly_name: energy-solar
+  device_name: energy-solar
+  created_by: "StudioTiiM 2024"
+  device_description: "Monitoring solar inverter"
+
+#-------------------------------------------
+# POWER CONSUMPTION 
+# whit multimeter
+#-------------------------------------------
+# Power consumption 
+# Normal-  wifi:            mA
+
+#-------------------------------------------
+# DEFINE PINS AND VARIABILES
+# CIRCUIT AND MODULES - basic definitions and description of the device
+#-------------------------------------------
+
+ # ----- MCU -----
+  # Module: ESP32 WROOM CH340C + Terminal 30 pin adapter 
+   # LDO: AMS1115 Voltage in: max 6.5V, out: 3.3 +/- 0.3V, Current: 1500mA / Drop voltage 0.260V / Quiescent current: 8mA
+   # Specification: Chip Family: ESP32 / Chip Model: ESP32-D0WDQ6 (revision 1) / Number of Cores: 2 /Max CPU Frequency: 240MHz / Has Bluetooth: YES / Has Embedded Flash: NO / Has Factory-Calibrated ADC: YES /MAC Address: C8:C9:A3:C7:C4:F4
+   
+   # Pinout:
+    #                    +-----------------------+
+    #                    |  +--+  +--+  +--+--+  |
+    #                    |  |  |  |  |  |  |  |  |
+    #                    |  |  +--+  +--+  |  |  |
+    #                    |                       |
+    #             GND --+|                       |+-- GND
+    #             3V3 --+|                       |+-- GPIO23 VSPI
+    #              EN --+|                       |+-- GPIO22 VSPI SCL
+    # ADC1 VP  GPIO36 --+|   +----------+        |+-- GPIO01 TXD0 CLKOU3
+    # ADC1 VN  GPIO39 --+|   | MCU      |        |+-- GPIO03 RXD0 CLKOUT2
+    # ADC1     GPIO34 --+|   |          |        |+-- GPIO21 VSPI SDA
+    # ADC1     GPIO35 --+|   |          |        |+-- NC
+    # ADC1     GPIO32 --+|   |          |        |+-- GPIO19 VSPI
+    # ADC1     GPIO33 --+|   +----------+        |+-- GPIO18 VSPI
+    # ADC2 DAC GPIO25 --+|     +---------+       |+-- GPIO05 VSPI
+    # ADC2 DAC GPIO26 --+|    -| FLASH   |-      |+-- GPIO17 TXD2
+    # ADC2     GPIO27 --+|    -|         |-      |+-- GPIO16 RXD2
+    # ADC2     GPIO14 --+|    -|         |-      |+-- GPIO04 ADC2 
+    # ADC2     GPIO12 --+|    -|        °|-      |+-- GPIO0  ADC2 CLKOUT1
+    #                    |     +---------+       |
+    #                    +-----------------------+
+    #                       + + + + + + + + + +
+    #                       | | | | | | | | | |
+    #              GND -----+ | | | | | | | | +------ GPIO02 ADC2
+    #     ADC2 GPIO13 --------+ | | | | | | +-------- GPIO15 ADC2
+    #      SPI GPIO09 ----------+ | | | | +---------- GPIO08 SPI
+    #      SPI GPIO10 ------------+ | | +------------ GPIO07 SPI
+    #      SPI GPIO11 --------------+ +-------------- GPIO06 SPI
+
+   # Description pins:
+    # PINS ESP32    | ESP32 QWD   | FUNCTION     | INPUT | OUTPUT | ADC | PWM | I2C           | SPI  | RESISTOR             | BOOT       | FLASH   | HIGH AT BOOT | BOOT FAILS | NOTES
+    # ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+    # EN            | CHIP_PU     | RESET                                                            | 10.0k PULLUP PCB     |                                     |
+    # 3V3           | VDD3P3_RTC  |
+    # 1V8           | VDD_SDIO    |
+    # 1V8 - 3.6 V   | VDD3P3_CPU  |
+    # GPIO0  *      |             | STRAPPING    | OK!   | OK!    |     | OK  | OK            |      | 10.0k PULLUP         | PULLUP    | PULLDOWN | PWM          | LOW
+    # GPIO01 *      | U0TXD       | TX           | OK!*1 | OK     |     | OK  | OK            |      |                      |           |          | HIGH         |            | 
+    # GPIO02 *      |             | STATUS LED   | OK    | OK     |     | OK  | OK            |      | INTERNAL PULLDOWN    | PULLUP    |          | HIGH         |            | 
+    # GPIO03 *      | U0RXD       | RX           | OK    | OK!*1  |     | OK  | OK            |      |                      |           |          | HIGH         |            | 
+    # GPIO04 *      |             |              | OK    | OK     |     | OK  | OK            |      | INTERNAL PULLDOWN    |           |          |              |
+    # GPIO05 *      |             | STRAPPING    | OK    | OK!    |     | OK  | OK            |      | INTERNAL PULLUP      |           |          | PWM          | LOW
+    # GPIO06        | SD_CLK      | INTERNAL SPI |       |        |     |     |               | CLK  |                      |           |          |              |
+    # GPIO07        | SD_DATA_0   | INTERNAL SPI |       |        |     |     |               | MISO |                      |           |          |              |
+    # GPIO08        | SD_DATA_1   | INTERNAL SPI |       |        |     |     |               | MOSI |                      |           |          |              |
+    # GPIO09        | SD_DATA_2   | INTERNAL SPI |       |        |     |     |               | HD   |                      |           |          | HIGH         |
+    # GPIO10        | SD_DATA_3   | INTERNAL SPI |       |        |     |     |               | WP   |                      |           |          | HIGH         |
+    # GPIO11        | SD_CMD      | SPI CSC/CMD  |       |        |     |     |               | CS   |                      |           |          | HIGH         |
+    # GPIO12 *      | MTDI        | STRAPPING    | OK!*3 | OK     |     | OK  | OK            |      |                      |           |          | LOW          | HIGH
+    # GPIO13 *      | MTCK        |              | OK    | OK     |     | OK  | OK            |      |                      |           |          |              |
+    # GPIO14 *      | MTMS        |              | OK    | OK     |     | OK  | OK            |      |                      |           |          | PWM          |
+    # GPIO15 *      | MTDO        | STRAPPING    | OK!   | OK!    |     | OK  | OK            |      |                      | PULLDOWN  |          | PWM          | HIGH
+    # GPIO16        |             | RX2 PSRAM*4  | OK    | OK     |     | OK  | OK            |      |                      |           |          | PWM          |
+    # GPIO17 *      |             | TX2 PSRAM*4  | OK    | OK     |     | OK  | OK            |      |                      |           |          | PWM          |
+    # GPIO18 *      |             |              | OK    | OK     |     | OK  | OK            |      |                      |           |          |              |
+    # GPIO19 *      |             |              | OK    | OK     |     | OK  | OK            |      |                      |           |          |              |
+
+    # GPIO21 *      |             |              | OK    | OK     |     | OK  | OK            |      |                      |           |          |              |
+    # GPIO22 *      |             |              | OK    | OK     |     | OK  | OK            |      |                      |           |          |              |
+    # GPIO23 *      |             |              | OK    | OK     |     | OK  | OK            |      |                      |           |          |              |
+    
+    # GPIO25 *      |             |              | OK    | OK     |     | OK  | OK            |      |                      |           |          |              |
+    # GPIO26 *      |             |              | OK    | OK     |     | OK  | OK            |      |                      |           |          |              |
+    # GPIO27 *      |             |              | OK    | OK     |     | OK  | OK            |      |                      |           |          |              |
+
+    # GPIO32 *      | 32K_XP      |              | OK    | OK     |     | OK  | OK            |      |                      |           |          |              |
+    # GPIO33 *      | 32K_XN      |              | OK    | OK     |     | OK  | OK            |      |                      |           |          |              |
+
+    # GPIO34 *      | VDET_1      |              | OK    |        | OK  |     |               |      |                      |           |          |              |
+    # GPIO35 *      | VDET_2      |              | OK    |        | OK  |     |               |      |                      |           |          |              |
+    # GPIO36 *      | SENSOR_VP   | VP           | OK*5  |        | OK  |     |               |      |                      |           |          |              |
+    # GPIO37        | SENSOR_CAPP |
+    # GPIO38        | SENSOR_CAPN |
+    # GPIO39 *      | SENSOR_VN   | VN           | OK*5  |        | OK  |     |               |      |                      |           |          |              |
+
+    # * Connected on this project
+    # *1 Disable hardware uart. logger baud_rate: 0
+    # *2 recommended I2C
+    # *3 May damage flash if low at boot on 1.8V flash chips
+    # *4 GPIO 16 & 17 are usually connected to the SPI flash and PSRAM. These do show some activity during boot to detect the presence of PSRAM. For example GPIO 17 may still show some high frequency signal until it is specifically set to a high or low output state. When PSRAM is present, these pins should not be used.
+    # *5 GPIO 36 & 39 should not be used for interrupts when also using ADC or WiFi and Bluetooth. These pins are on some boards labelled as: 
+    #    The internal Hall sensor in the ESP32 is connected to these two pins.
+    #    The Hall Sensor uses channels 0 and 3 of ADC1. Do not configure these channels for use as ADC channels when also reading from the Hall sensor.
+    # *6 
+    # GPIO08 and GPIO09 pulldown invalid on boot
+    # Current draw 12mA max per GPIO
+
+# ----- ELECTRICITY ---------
+ # ----- POWER SUPPLY AND LDO-------
+  # Module: MP1584EN
+   # Specification: Voltage in 4.5-28 out adj 0.8 ~ 20V (fixed 5.1V) 2% / max voltage drop mV / current max 3.0A / current standby  μA / protection: overtemperature; current limiting 96% effectivity
+   # Circuit: connected to 24V battery
+   # Protection: 
+    # Fuse PPTC: 6V 750mA connected on LDO input Marking: 5
+
+# ----- SOLAR SYSTEM ---------
+ # ----- BATTERY ------------
+  # Manufacture:              LittoKala 
+  # Type:                     LiFePo4 8S1P 24V100Ah
+  # Installed:                   2          pcs
+  # Nominal Voltage:            24.0        V
+  # Working Voltage:            21.6 ~ 27.6 V
+  # Nominal Capacity:          100          Ah
+  # True Capacity:              70          Ah (140Ah)
+  # Nominal Energy:           2400          Wh
+  # True Energy:              1680          Wh (3360Wh)
+  # Max. Charging Voltage:      29.2        V ± 0.2V
+  # Max. Charging Current:      20          A (40A)
+  # Max. Discharging Current:  100          A (200A)
+  # Weight:                     18.7        kg
+  # Dimension:                50x34x10      cm
+
+  battery_capacite: "3360"
+  
+   # LIFEPO4 Battery charging specification:
+     # 3 stage charging:
+      # 1. stage: BULK       - Constant current SET max 30A   (show battery specification) (20% capacity battery)
+      # 2. stage: ABSORBTION - Constant voltage SET max 29.0V (3.625V per cell)
+      # 3. stage: FLOAT      - 27.6V                          (3.45V per cell)(current: 1% max capacity = 100Ah * 0.01 = 1A)
+
+ # ----- SOLAR PANEL ----- 
+  # Module: Q.CELLS (Q.PRO-G2 235) panel 235Wp polycrystal 29V
+   # Specification: Pmax 235W / Voltage Vmp: 29.26V Voc: 37.02V / Imp: 8.13A Isc: 8.71A / dimension: 167x100x50cm / Operating temperature: -40 ~ +85°C
+    # Vzdialenosť S = https://calc.efve.cz/preskokova-vzdalenost-s-a-jeji-vypocet/
+
+ # ----- INVERTOR -----
+  # Module: Efekta AX seria P1 3000-24 MPPT (similar Axpert MKS 3kW)
+   # Specifications:
+    # Arcticel number: SLAPVTSI3K0W1024
+    # Operating temperature rnge: 0 ~ 50°C
+    # Inverted Mode:               
+     # Rated Active Power:         3000  W
+     # Rated Apparent Power:       3000  AV
+     # Peak Power:                 6000  AV (5sec)
+     # DC Input Voltage:           24    V 
+     # DC Input Current:           142   A
+     # AC Output Voltage:          230   V (±5%)
+     # AC Output Frequency:        50/60 Hz 
+     # Ac Output Current:          13    A
+     # Max efficienty:             95    %
+    # AC Charging Mode:
+     # AC Input Voltage:           230 VAC
+     # AC Input Frequency:         50/60 Hz 
+     # AC Input Current:           17.7  A
+     # DC Output Voltage:          27    VDC
+     # AC Output Voltage:          230   VAC 
+     # AC Output Current:          13    A
+    # Solar Charge Mode:
+     # Rated Curent                60       A
+     # System Voltage:             24       VDC
+     # Overload protection:        31.0     VDC
+     # Operating Voltage Range:    30 ~ 115 VDC
+     # Max. Solar Voltage (VOC):   145      VDC
+     # Max. Solar power:           1200     W
+
+   # Connector: communication board
+    # Circuit: 6 pin connector
+     # 6 pin connector | Digtal isolator | MCU ESP32
+     # ---------------------------------------------
+     # 1 TX            | AI -> AO        | TX
+     # 2 RX            | BO -> BI        | RX
+     # 3 5V            | V2 -> V1        | 3V3
+     # 4 GND           | G2 -> G1        | GND
+     # 5 HFPW+         |                 |
+     # 6 Relay         |                 |
+
+     # Digital isolator: π122U31
+
+  # COMMUNICATIONS: https://github.com/ardupic/voltronic-inverter-communication-protocols or See MAX_Communication_Protocol_20210217.pdf
+
+  # Led indicator on invertor:
+    # Led indicator | State    | Message
+    # ------------------------------
+    # AC/INV        | SOLID ON | Output is powered by ulitility in Line mode
+    #               | FLASHING | Output is powered by battery or PV in battery mode
+    # CHG           | SOLID ON | Battery is fully charged
+    #               | FLASHING | Battery is charging
+    # Fault         | SOLID ON | Fault occurs in the inverter
+    #               | FLASHING | Warning condition occurs in the inverter
+
+  # PROTOCOLS PINS UART
+  uart_tx_invertor: GPIO01
+  uart_rx_invertor: GPIO03
+
+ # ----- CABLING -----
+  # BATTERY
+   # 2x 6mm2 (2*8AWG 14mm2 necessary)
+   # 
+
+ # ----- PROTECTION -----
+  # BATTERY
+   # FUSE: 2x150A Circuit Breaker Reset Fuse Inverter
+
+# ----- POWER CONSUMPTION DEVICE -----
+  # Cellar
+   # pracovňa led pás 55W
+   # Pivnica svetlo vstup 10W
+   # Pivnica neonka 25W
+   # PC 180W
+   # Kotol 200W standby 7W
+   # Okruhy 10W - 40W
+   # Kamera xiaomi 1,5W
+   
+   # Server:
+    # LEd pas: 25W
+    # Gateway: 16W
+    # RPI: 14W
+    # Kamery + Router 35W
+    
+    # Atelier 10W standby (klimatizacia)
+    # Peltier chladnčka 100W standby 20W
+
+ # ----- ADDITIONAL MEASURE ENERGY -----
+  # AC Output measure:
+   # Module:  Sonoff Dual R3 https://www.letscontrolit.com/forum/viewtopic.php?t=8948
+   # Pinout | ESP32  | SONOFF
+   # ----------------------------
+   # TX2    | GPIO16 |
+   # RX2    | GPIO17 |
+   #        | GPIO04 |
+   # IO0    | GPIO0  | BUTTON S1
+   # NC
+   # RX0    | GPIO03 | RX
+   # TX0    | GPIO01 | TX
+   # 3V3    | VCC    | 
+ 
+   # GND    | GND    | 
+   # SW1    | GPIO32 | BUTTON SW2
+   # SW2    | GPIO33 | BUTTON SW1
+   # TX1    | GPIO25 | RX CSE7761
+   # RX1    | GPIO26 | TX CSE7761
+   # RELAY0 | GPIO27 | RELAY 1
+   # RELAY1 | GPIO14 | RELAY 2
+   # WIFI   | GPIO13 | STATUS LED
+   
+   # Module: CSE7761 Two Channel measurement
+   # Pinout: SOP-16
+    # N.| Pin | Scheme | Pin         | N.
+    #           +----+
+    # 1 | VDD  -|°   |-  PULSE2      | 16
+    # 2 | V1P  -|    |-  CLK0/PULSE1 | 15
+    # 3 | V1N  -|    |-  CLKI        | 14
+    # 4 | V2P  -|    |-  SPIEN       | 13
+    # 5 | V2N  -|    |-  SCSN        | 12
+    # 6 | V3P  -|    |-  SCLK        | 11
+    # 7 | GND  -|    |-  SDI/RX      | 10
+    # 8 | VREF -|    |-  SD0/TX      | 9
+    #           +----+
+
+    # Connecting: Digital isolator: π122U31
+     # NO. | CSE7761 | Digtal isolator | MCU ESP32
+     # ---------------------------------------------
+     # 1   | GND     | G2 -> G1        | GND
+     # 2   | RX      | BO -> BI        | TX
+     # 3   | TX      | AI -> AO        | RX
+     # 4   | 3V3     | V2 -> V1        | 3V3
+
+  # PROTOCOLS PINS UART
+  uart_tx_cse: GPIO17
+  uart_rx_cse: GPIO16
+
+  # AC Input measure:
+   # Module: CT CLAMP SCT013 30A/1V class: 1
+   # Burder resistor: 18.1Ω 
+   # Inductor: 56.3mH
+   # Circuit: VCC -> 10K IN -> 10K -> GND; IN -> 22UF GND; Out -> GPIO
+  adc_ct_clamp: GPIO36
+
+
+   # Specifications: Core material: Ferrite / Ratio 1:2000 / Accuracy: 0.1% / Rated input: 20A output: 10mA / Rated sampling resistance: 200Ω voltage: 2V / Normal current: 100A (RL<30Ω) / Max current: 130A (RL<10Ω) / Internal resiatance: 78+-10Ω / Weight: 19.7g / Dimension out: 29.1mm (27.6mm) in 10.9mm
+   # Circuit: Divider 10 and 10k, Capacitor 10uF
+   # Burden resistor:
+    # Primary peak-current = RMS current × √2 = 16 A × 1.414 = 22.6 A
+    # Secondary peak-current = Primary peak-current / no. of turns secondary coil = 22.6 A / 2000 = 0.0126A
+    # Ideal burden resistance = (AREF/2) / Secondary peak-current = (3.3 V / 2) / 0.01263 A = 131Ω
+    # Burder resistor on circuit: 180Ω (max 18A)
+
+ # ----- DISPLAY -----
+  # Module: 16x2 LCD Display Module LCD1602 Green Screen 16x2 Character LCD Display PCF8574T I2C
+  # Specification: controller ST7066 / Voltage 5VDC
+  # Circuit: Interface: I2C pcf8574 address: 0x3A (soldering A0 and A2)
+   # PCF8574 and PCF8574A I2C-Bus Slave Address Map
+   # INPUTS PCF8574 I2C-Bus PCF8574A I2C-Bus
+   # A2 A1 A0 Slave Address Slave Address
+   # L L L 20 (hexadecimal) 38 (hexadecimal)
+   # L L H 21 (hexadecimal) 39 (hexadecimal)
+   # L H L 22 (hexadecimal) 3A (hexadecimal)
+   # L H H 23 (hexadecimal) 3B (hexadecimal)
+   # H L L 24 (hexadecimal) 3C (hexadecimal)
+   # H L H 25 (hexadecimal) 3D (hexadecimal)
+   # H H L 26 (hexadecimal) 3E (hexadecimal)
+   # H H H 27 (hexadecimal) 3F (hexadecimal)
+
+   # Modification: i2c pull up resistor 4k7 swapped 10k (power only 5V)
+  # Pinout:
+  # Pin  | Name            | Type         | Description | Connection
+  # -----------------------------------------------------------------
+  # 1    | Ground          | Source       | GND                       | GND
+  # 2    | VCC             | Source       | VCC                       | VCC
+  # 3    | V0/VEE          | Control      | Adjusts the contrast      | Connected to a variable POT that can source 0-5V
+  # 4    | Register Select | Control      | Command/Data Register     | Connected to a MCU pin and gets either 0 or 1. 0 -> Command Mode    1-> Data Mode
+  # 5    | Read/Write      | Control      | Read/Write Operation      | Connected to a MCU pin and gets either 0 or 1. 0 -> Write Operation 1-> Read Operation
+  # 6    | Enable          | Control      | High Read/Write Operation | Connected to MCU and always held high.
+  # 7-14 | Data Bits (0-7) | Data/Command | Send Command or data      | In 4-Wire ModeOnly 4 pins (0-3) is connected to MCUIn 8-Wire ModeAll 8 pins(0-7) are connected to MCU
+  # 15   | LED Positive    | LED          | LED illuminate            | +5V
+  # 16   | LED Negative    | LED          | LED illuminate            | GND
+  dimensions_size: "16x2"
+  pcf_adresse:     "0x3A"
+
+# ----- OTHERS ------
+# Other charger module in other battery
+ # SD30CRMA MPPT Charger
+ # Enable after in voltage 17.5 - 18.5V
+ # R5 = 12k input 7-28V
+
+ # ----- LEDS -----
+ # STATUS LED
+  # Module: smd on board red
+  status_led_pin: GPIO02
+
+  pin_led1:    GPIO27
+  pin_led2:    GPIO05
+  pin_led3:    GPIO12
+  pin_led4:    GPIO13
+
+ # ----- TVOC / TEMP AND HUMIDITY -----
+  # Module: ENS160+AHT21 CARBON dioxide CO2 eCO2 TVOC Air quality and temperature and humidity sensor
+  # Specifications: indoor air quality / volatile organic compounds (VOCS), including toluene, hydrogen, ethanol, N02 and ozone.
+   # Detection of reducing (VOC) and oxidizing gases such as N02
+   # Integrated sensor measurement and heater drive control
+   # Integrated pre-calibration sensor fusion and automatic baseline correction algorithm
+   # Multiple IAQ outputs (TV0C, EC02, AQI)
+   # 12C and SPI interfaces
+   # < 1 minute warm up
+   # < 1 hour start
+   # High resistance to siloxane and humidity
+   # Environment -40 to +85℃/5 to 95%RH
+   # VDD1.71 to 1.98 V
+ # Interface: I2C address: 0x53 ENS160 + 0x38 AHT21
+ # Circuit: 5V power supply
+ # Mpdifications: add cap 100uF GND and 1.8V out LDO
+
+ # ----- DALLAS -----
+  # Module: 3x Dallas DS18B20
+   # Circuit: 4.7k resistor data pin to VCC (unsolder boot button and pullup 10k resistor on ESP323 30pin, solder dupon GND and GPIO0)
+   # Power consumption: 50μA
+   # Measure: Battery
+  dallas_pin:  GPIO0
+  update_time: 10s
+  dallas_address: "0x18ac0a720e64ff28"
+
+ # ----- BUTTONS -----
+  # Module: SMD Push button 4pin 6x6x3.1mm
+   # Specification: max 12VDC / Rated current 0.1A / Resistance: Contact < 0.03Ω; isolation > 100MΩ / Life: 100 000 times
+   # Circuit: GND -> Button -> GPIO + 10kΩ -> VCC
+  pin_button1: GPIO19 # left
+  pin_button2: GPIO23
+  pin_button3: GPIO18
+  pin_button4: GPIO04 # right
+
+ # ----- PIR -----
+  # Module: Pir sensor SB312
+   # Specifications: Voltage: 2.7 ~ 12V / Delay time: 2s / Block time: 2s / trigger mode: repeatable / Sense: degree < 90° lengh: < 3m / Working temperature -20 ~ 60 °C
+   # Circuit: VCC, GND, Vout to GPIO
+   # Power consumption: standby: 9uA / detected: 15uA
+  pin_pir:     GPIO39
+
+ # ----- REED -----
+  # Module: Magnetic reed switch
+  # Specifications: 
+   # The reed contacts and the inert gas are sealed in the glass tube and are not affected by the external atmosphere
+   # Material: glass + conductive metal needle
+   # Recommended soldering conditions: manual soldering 280~300℃, wave soldering 250~300℃.
+  # Circuit: connected to battery fuse. in series
+  pin_reed1:   GPIO35
+  #pin_reed2:   GPIO35 ?
+
+ # ----- RELAY -----
+  # Module: T90-5VDC-TL-C 4 channal module
+   # Specification: Voltage: 5VDC "190mA" / 5pins / Range: 250VAC 30A, 30VDC 30A / Lifespan: 100 000 / Low or High trigger whit jumper
+   # Circuit: modul whit pc817 opto + j3y NPN transistor
+  # Relay 1: GRID
+  pin_relay1:  GPIO32 #green
+  # Relay 2: Load 1 (House)
+  pin_relay2:  GPIO33 #whitegreen
+  # Relay 3: Load 2 (Cellar)
+  pin_relay3:  GPIO25 #whiteblue
+  # Relay 4: Load 3 (UPS+HEATING)
+  pin_relay4:  GPIO26 #blue
+
+  # Relay 4: Load 3 (UPS+HEATING)
+  pin_solid_state:  GPIO21 #blue
+ # ----- BUZZER -----
+  # Module: Active Buzzer TMB-12A03
+   # Specification: Rated Voltage: 3.0V Operating Voltage 2.5 - 4V / Rated current: <35mA / Sound: 82dB / Resonant Freq: 2300 +- 500 / Operating temperature: -20 - +60°C / Storage temp: -20 - +70°C / Weight: 2g
+  pin_buzzer:  GPIO22
+
+#-------------------------------------------
+# PROTOCOLS
+#-------------------------------------------
+ # ----- PROTOCOLS PINS -----
+  # I2C
+  i2c_sda: GPIO14
+  i2c_scl: GPIO15
+
+ # ----- PROTOCOLS SETTINGS -----
+i2c:
+  sda: $i2c_sda
+  scl: 
+    number: $i2c_scl
+    ignore_strapping_warning: true
+  scan: True
+  #fixed pcf8574 lcd display driver not connected to wifi (esp8266)
+  # https://github.com/esphome/issues/issues/2128
+  frequency: 100kHz 
+
+uart:
+ # INVERTOR 
+  # BaudRate 2400
+  # Start Bit 1
+  # Data Bit 8
+  # Parity Bit N
+  # Stop Bit 1
+  - id: uart_invertor
+    tx_pin: $uart_tx_invertor
+    rx_pin: $uart_rx_invertor
+    baud_rate: 2400
+    #rx_buffer_size: 512
+    
+    # DEBBUGING DEVELOPER READY CODES
+    debug:
+      direction: BOTH
+      dummy_receiver: false
+      after:
+        delimiter: "\r"
+      sequence:
+        - lambda: UARTDebug::log_string(direction, bytes);
+
+ # CSE7761
+  - id: uart_cse7761
+    tx_pin: $uart_tx_cse
+    rx_pin: $uart_rx_cse
+    baud_rate: 38400
+    parity: EVEN
+    stop_bits: 1
+
+dallas:
+  - pin: 
+      number: "$dallas_pin"
+      ignore_strapping_warning: true
+    update_interval: $update_time
+
+#-------------------------------------------
+# ESP - MAIN SETTINGS
+#-------------------------------------------
+esphome:
+  name: energy-solar
+  project:
+    name: "studiotiim.energy_solar"
+    version: 2024.05.1.0.0
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+    version: recommended
+
+# Enable Home Assistant API
+api:
+  reboot_timeout: 120min
+  services:
+    - service: play_rtttl_invertor
+      variables:
+        song_str: string 
+      then:
+        - rtttl.play:
+            rtttl: !lambda 'return song_str;'
+
+ota:
+  - platform: esphome
+    password: !secret ota_pass
+
+#-------------------------------------------
+# LOGGER
+#-------------------------------------------
+logger:
+  #level: VERBOSE
+  # disable log over uart
+  baud_rate: 0
+  logs:
+    # Hidden warning: 
+    # [00:00:00][W][component:204]: Component xxxxxx took a long time for an operation (x.xx s).
+    # [00:00:00][W][component:205]: Components should block for at most 20-30ms.
+    # Source: https://github.com/esphome/issues/issues/4717
+    component: ERROR
+
+#-------------------------------------------
+# ETHERNET
+#-------------------------------------------
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  manual_ip:
+    static_ip: 192.168.31.210
+    gateway:   192.168.31.1
+    subnet:    227.227.227.0
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Energy-Solar Fallback Hotspot"
+    password: "passenergysolar"
+
+captive_portal:
+    
+#-------------------------------------------
+# EXTERNAL AND CUSTOM COMPONENT
+#-------------------------------------------
+external_components:
+  #- source: github://syssi/esphome-pipsolar@pip8048
+  #- source: github://syssi/esphome-pipsolar@2424mse1
+  #- source: github://syssi/esphome-pipsolar@hms-3k-24v
+  #  refresh: 0s
+  #- source: github://pr#5299
+  #  components: [pipsolar]
+  #  refresh: always
+
+  # Edited syssi custom component whit mixed 2424mse1 and pip8048 whot add functions
+  - source: 
+      type: local
+      path: custom_component
+    components:
+      - pipsolar
+
+#-------------------------------------------
+# STATUS LED
+#-------------------------------------------
+status_led:
+  pin: 
+    number: $status_led_pin
+    inverted: True
+    ignore_strapping_warning: true
+    
+#-------------------------------------------
+# PIP SOLAR COMPONENT
+#-------------------------------------------
+pipsolar:
+  - uart_id: uart_invertor
+    id: effekta_ax
+    update_interval: 5s # 5s update 30s whitout this settings update 3s"
+
+#-------------------------------------------
+# SENSORS
+#-------------------------------------------
+sensor:
+  #-------------------------------------------
+  # Wifi signal component
+  #-------------------------------------------
+  - platform: wifi_signal
+    name: "${friendly_name} Signal"
+    id: "signal_strange"
+    update_interval: 60s
+
+  #-------------------------------------------
+  # DALLAS temperature sensor - DS18B20 
+  # connected 4.7k to VCC 
+  #-------------------------------------------
+  - platform: dallas
+    name: "${friendly_name} Temperature - Battery"
+    address: "$dallas_address"
+    id: temp_bat
+    entity_category: diagnostic
+
+  #-------------------------------------------
+  # ENS160 TVOC sensor
+  #-------------------------------------------
+  - platform: ens160_i2c
+    eco2:
+      name: "${friendly_name} AirQuality - eCO2"
+    tvoc:
+      name: "${friendly_name} AirQuality - TVOC" 
+    aqi:
+      name: "${friendly_name} AirQuality - AQI"
+      id: aqi_index
+    update_interval: 15s
+    address: 0x53
+    compensation:
+      temperature: aht21_temperature
+      humidity:    aht21_humidity
+
+  #-------------------------------------------
+  # AHT21 Temp and Humidity sensor
+  #-------------------------------------------
+  - platform: aht10
+    variant: AHT20
+    temperature:
+      name: "${friendly_name} AirQuality - Temperature"
+      id: aht21_temperature
+      filters:
+        - offset: "-2.0" # compensate temperature
+      accuracy_decimals: 1
+    humidity:
+      name: "${friendly_name} AirQuality - Humidity"
+      id: aht21_humidity
+      accuracy_decimals: 0
+    update_interval: 15s  
+    address: 0x38
+    
+  #-------------------------------------------
+  # CSE7761
+  #-------------------------------------------
+  - platform: cse7761
+    uart_id: uart_cse7761
+    voltage:
+      name: "${friendly_name} Load - Voltage CSE"
+      filters:
+        offset: -2.0
+    current_1:
+      name: "${friendly_name} Load - Current 1"
+      filters:
+        multiply: 0.75
+    current_2:
+      name: "${friendly_name} Load - Current 2"
+      filters:
+        multiply: 0.75
+    active_power_1:
+      name: "${friendly_name} Load - Power 1"
+      filters:
+        multiply: 0.75
+    active_power_2:
+      name: "${friendly_name} Load - Power 2"
+      filters:
+        multiply: 0.75
+    update_interval: 15s
+
+  #-------------------------------------------
+  # Grid - Current CT-Clamp
+  #-------------------------------------------
+  - platform: ct_clamp
+    sensor: adc_sensor
+    name: "${friendly_name} Grid - Current"
+    update_interval: 5s
+    sample_duration: 1s
+    accuracy_decimals: 3
+    #filters:
+      #- calibrate_linear:
+      #    method: exact
+      #    datapoints:
+      #      - 0.005 -> 0.00
+      #      - 0.0365 -> 3.18
+      #      - 0.057 -> 5.00
+      #      - 0.094 -> 8.14
+      #- lambda: if (x < 0.045) return 0; else return x;
+    filters:
+      - lambda: "return x < 16.0f ? 0.0f : x;" # condition if x < 16 return 0
+      - calibrate_linear:
+          method: exact
+          datapoints:
+            - 0 -> 0
+            - 48 -> 3.18
+            - 75 -> 5.00
+            - 122 -> 8.14
+      - lambda: "return clamp(x, 0.0f, 30.0f);" # clamp 0 - 30A (ct_clamp is 30A)
+      - filter_out: nan
+
+    id: grid_current
+    on_value: 
+      then:
+        - component.update: grid_power
+
+  # ADC internal
+  - platform: adc
+    pin: $adc_ct_clamp
+    id: adc_sensor
+    name: adc sensor
+    attenuation: 12db
+    #update_interval: 1s
+    accuracy_decimals: 4
+    internal: True
+    raw: true
+
+  #-------------------------------------------
+  # Grid Power - template
+  #-------------------------------------------
+  - platform: template
+    name: "${friendly_name} Grid - Power"
+    id: grid_power
+    lambda: return (id(grid_current).state * id(grid_voltage).state);
+    accuracy_decimals: 1
+    unit_of_measurement: W
+    icon: "mdi:flash"
+    update_interval: never
+
+#-------------------------------------------
+# Total energy - Charge BATTERY
+#-------------------------------------------
+  - platform: template
+    name: "${friendly_name} Battery - Power Charging"
+    id: battery_power_charging
+    lambda: return (id(battery_charging_current).state * id(battery_voltage).state);
+    accuracy_decimals: 0
+    unit_of_measurement: W
+    icon: "mdi:flash"
+    update_interval: 10s
+
+#-------------------------------------------
+# Total energy - Discharge BATTERY
+#-------------------------------------------
+  - platform: template
+    name: "${friendly_name} Battery - Power Discharging"
+    id: battery_power_discharging
+    lambda: return (id(battery_discharging_current).state * id(battery_voltage).state);
+    accuracy_decimals: 0
+    unit_of_measurement: W
+    icon: "mdi:flash"
+    update_interval: 10s
+
+#-------------------------------------------
+# Total energy - CHARGE DAILY BATTERY
+#-------------------------------------------
+  - platform: total_daily_energy
+    name: "${friendly_name} Battery - Energy Charge"
+    power_id: battery_power_charging
+    filters:
+      - multiply: 0.001
+    unit_of_measurement: kWh
+    state_class: total_increasing
+    device_class: energy
+    icon: "mdi:battery-arrow-up-outline"
+
+#-------------------------------------------
+# Total energy - DISCHARGE DAILY BATTERY
+#-------------------------------------------
+  - platform: total_daily_energy
+    name: "${friendly_name} Battery - Energy Discharge"
+    power_id: battery_power_discharging
+    filters:
+      - multiply: 0.001
+    unit_of_measurement: kWh
+    state_class: total_increasing
+    device_class: energy
+    icon: mdi:battery-arrow-down-outline
+
+#-------------------------------------------
+# Total energy - DISCHARGE DAILY BATTERY
+#-------------------------------------------
+  - platform: total_daily_energy
+    name: "${friendly_name} Solar - Energy"
+    power_id: solar_power
+    filters:
+      - multiply: 0.001
+    unit_of_measurement: kWh
+    state_class: total_increasing
+    device_class: energy
+    icon: mdi:solar-power-variant
+
+  #-------------------------------------------
+  # PIPSOLAR SENSORS
+  #-------------------------------------------
+  - platform: pipsolar
+    pipsolar_id: effekta_ax
+    #-------------------------------------------
+    # QPIRI - READY
+    #-------------------------------------------
+    #
+    # Parameters rating on this inverter EFFEKTA AX-P1 300-24:
+    #
+    # Grid voltage:              230.0 V
+    # Grid current:               13.0 A
+    # AC Output voltage:         230.0 V
+    # AC Output current:          13.0 A
+    # AC Output frequency:        50.0 Hz
+    # AC Output apparent power: 3000.0 VA
+    # AC Output active power:   3000.0 W
+    # Battery voltage:            24.0 V
+    # Machine type:               10   Hybrid
+    # Typology:                    0   transformerless
+    # Output mode:                 0   single machine output
+    # Eeprom version:              0.0
+    
+    #-------------------------------------------
+    # Unnecessary sensors 
+    # whitout changes life invertor
+    #-------------------------------------------
+    #grid_rating_voltage:
+    #  name: "${friendly_name} grid_rating_voltage"
+    #grid_rating_current:
+    #  name: "${friendly_name} grid_rating_current"
+    #ac_output_rating_voltage:
+    #  name: "${friendly_name} ac_output_rating_voltage"
+    #ac_output_rating_frequency:
+    #  name: "${friendly_name} ac_output_rating_frequency"
+    #ac_output_rating_current:
+    #  name: "${friendly_name} ac_output_rating_current"
+    #ac_output_rating_apparent_power:
+    #  name: "${friendly_name} ac_output_rating_apparent_power"
+    #ac_output_rating_active_power:
+    #  name: "${friendly_name} ac_output_rating_active_power"
+    #battery_rating_voltage:
+    #  name: "${friendly_name} battery_rating_voltage"
+    #machine_type:
+    #  name: "${friendly_name} machine_type"
+    #topology:
+    #  name: "${friendly_name} topology"
+    #output_mode:
+    #  name: "${friendly_name} output_mode"
+    #eeprom_version:
+    #  name: "${friendly_name} eeprom_version"
+    #-------------------------------------------
+      
+    #-------------------------------------------
+    # BATTERY - type
+    # 0 - AGM 
+    # 1 - Flooded battery, 
+    # 2 - user define, 
+    # 3 - Pylontech, 
+    # 4 - Shinheung, 
+    # 5 - Weco, 
+    # 6 - Soltaro, 
+    # 7 - BAK, 
+    # 8 - Lib, 
+    # 9 - Lic
+    #-------------------------------------------
+    battery_type:
+      internal: true
+      id: battery_type
+      on_value:
+      # send text sensor
+        then:
+          - if:
+              condition:
+                lambda: return id(battery_type).state == 0;
+              then:
+                  - text_sensor.template.publish:
+                      id: battery_type_text
+                      state: "AGM"
+          - if:
+              condition:
+                lambda: return id(battery_type).state == 1;
+              then:
+                  - text_sensor.template.publish:
+                      id: battery_type_text
+                      state: "Flooded"
+          - if:
+              condition:
+                lambda: return id(battery_type).state == 2;
+              then:
+                  - text_sensor.template.publish:
+                      id: battery_type_text
+                      state: "USER"
+          - if:
+              condition:
+                lambda: return id(battery_type).state == 3;
+              then:
+                  - text_sensor.template.publish:
+                      id: battery_type_text
+                      state: "PLYNOTECH"
+          - if:
+              condition:
+                lambda: return id(battery_type).state == 4;
+              then:
+                  - text_sensor.template.publish:
+                      id: battery_type_text
+                      state: "SHINHEUNG"
+          - if:
+              condition:
+                lambda: return id(battery_type).state == 5;
+              then:
+                  - text_sensor.template.publish:
+                      id: battery_type_text
+                      state: "WECO"
+          - if:
+              condition:
+                lambda: return id(battery_type).state == 6;
+              then:
+                  - text_sensor.template.publish:
+                      id: battery_type_text
+                      state: "SOLTARO"
+          - if:
+              condition:
+                lambda: return id(battery_type).state == 7;
+              then:
+                  - text_sensor.template.publish:
+                      id: battery_type_text
+                      state: "BAK"
+          - if:
+              condition:
+                lambda: return id(battery_type).state == 8;
+              then:
+                  - text_sensor.template.publish:
+                      id: battery_type_text
+                      state: "LIB"
+          - if:
+              condition:
+                lambda: return id(battery_type).state == 9;
+              then:
+                  - text_sensor.template.publish:
+                      id: battery_type_text
+                      state: "LIC"
+
+    #-------------------------------------------
+    # QPIGS - READY
+    #-------------------------------------------
+    #-------------------------------------------
+    # GRID
+    #-------------------------------------------
+    grid_voltage:
+      name: "${friendly_name} Grid - Voltage"
+      id: grid_voltage
+      accuracy_decimals: 0
+    grid_frequency:
+      name: "${friendly_name} Grid - Frequency"
+      
+    #-------------------------------------------
+    # LOAD
+    #-------------------------------------------
+    ac_output_voltage:
+      name: "${friendly_name} Load - Voltage"
+    ac_output_frequency:
+      name: "${friendly_name} Load - Frequency"
+    ac_output_apparent_power:
+      name: "${friendly_name} Load - Apparent Power"
+      icon: "mdi:flash"
+      accuracy_decimals: 0
+    ac_output_active_power:
+      name: "${friendly_name} Load - Power"
+      icon: "mdi:flash"
+      id: load_power
+    output_load_percent:
+      name: "${friendly_name} Load - Percent"
+      
+    #-------------------------------------------
+    # BUS
+    #-------------------------------------------
+    bus_voltage:
+      name: "${friendly_name} BUS - Voltage"
+      accuracy_decimals: 0
+      
+    #-------------------------------------------
+    # BATTERY
+    #-------------------------------------------
+    battery_voltage:
+      name: "${friendly_name} Battery - Voltage"
+      id: battery_voltage
+    battery_charging_current:
+      name: "${friendly_name} Battery - Current Charging"
+      id: battery_charging_current
+    battery_discharge_current:
+      name: "${friendly_name} Battery - Current Discharge"
+      id: battery_discharging_current
+    battery_capacity_percent:
+      name: "${friendly_name} Battery"
+      icon: mdi:battery
+      entity_category: diagnostic
+    battery_voltage_scc:
+      name: "${friendly_name} Battery - Voltage SCC"
+    #battery_voltage_offset_for_fans_on:
+    #  name: "${friendly_name} Battery - voltage_offset_for_fans_on"
+      
+    #-------------------------------------------
+    # TEMPERATURE
+    #-------------------------------------------
+    inverter_heat_sink_temperature:
+      name: "${friendly_name} Temperature - Invertor"
+      entity_category: diagnostic
+
+    #-------------------------------------------
+    # NOT SUPPORT ON THIS INVERTOR
+    #-------------------------------------------
+    #pv2_input_current:
+    #  name: "${friendly_name} pv2_input_current"
+    #pv2_input_voltage:
+    #  name: "${friendly_name} pv2_input_voltage"
+    #pv2_charging_power:
+    #  name: "${friendly_name} pv2_charging_power"
+    #parallel_max_num:
+    #  name: "${friendly_name} parallel_max_num"
+    #pv_ok_condition_for_parallel:
+    #  name: "${friendly_name} pv_ok_condition_for_parallel"
+
+    #-------------------------------------------
+    # SOLAR
+    #-------------------------------------------
+    # bad value solar current send same as battery current
+    #pv_input_current_for_battery:
+    #  name: "${friendly_name} Solar - Current"
+    
+    pv_input_voltage:
+      name: "${friendly_name} Solar - Voltage"
+      id: solar_voltage
+    pv_charging_power:
+      name: "${friendly_name} Solar - Power"
+      id: solar_power
+
+  - platform: template
+    name: "${friendly_name} Solar - Current"
+    lambda: |-
+      if (id(solar_power).state == 0 && id(solar_power).state == 0) { return 0; }
+      else { return (id(solar_power).state / id(solar_voltage).state); }
+    accuracy_decimals: 1
+    unit_of_measurement: A
+    icon: "mdi:flash"
+    update_interval: 10s
+    on_value:
+      then:
+        if:
+          condition:
+            lambda: return x > 0.5;
+          then:
+            - switch.turn_on: backlight_invertor
+          else:
+            - switch.turn_off: backlight_invertor
+
+    #-------------------------------------------
+    # Battery - Disharge Percent
+    #-------------------------------------------
+  - platform: template
+    name: "${friendly_name} Battery - Disharge Percent"
+    lambda: return ((id(battery_power_discharging).state / ($battery_capacite / 100)) * (-1));
+    accuracy_decimals: 1
+    unit_of_measurement: "%/hr"
+    update_interval: 10s
+    icon: "mdi:battery-arrow-down"
+
+#-------------------------------------------
+# TEXT SENSORS
+#-------------------------------------------
+text_sensor:
+  #-------------------------------------------
+  # PIP SOLAR - TEXT
+  #-------------------------------------------
+  - platform: pipsolar
+    pipsolar_id: effekta_ax
+    
+    #-------------------------------------------
+    # Device mode - text templated
+    #
+    # MODE          | CODE(M)
+    # -----------------------
+    # Power on mode | P
+    # Standby mode  | S
+    # Line mode     | L
+    # Battery mode  | B
+    # Fault mode    | F
+    # Shutdown mode | D
+    #-------------------------------------------
+    device_mode:
+      name: "${friendly_name} device_mode"
+      internal: true
+      id: device_mode
+      on_value:
+        then:
+          component.update: device_mode_text
+
+  - platform: template
+    id: device_mode_text
+    name: "${friendly_name} Device mode"
+    lambda: |-
+      if      (id(device_mode).state == "P") { return {"Power on"}; }
+      else if (id(device_mode).state == "S") { return {"Standby"} ; }
+      else if (id(device_mode).state == "L") { return {"Line" }   ; }
+      else if (id(device_mode).state == "B") { return {"Battery"} ; }
+      else if (id(device_mode).state == "F") { return {"Fault"}   ; }
+      else if (id(device_mode).state == "D") { return {"Shutdown"}; }
+      else                                   { return {"Loading"} ; }
+    icon: "mdi:home-battery"
+    update_interval: never
+    entity_category: diagnostic
+
+  #-------------------------------------------
+  # BATTERY - type text
+  # 0 - AGM 
+  # 1 - Flooded battery, 
+  # 2 - user define, 
+  # 3 - Pylontech, 
+  # 4 - Shinheung, 
+  # 5 - Weco, 
+  # 6 - Soltaro, 
+  # 7 - BAK, 
+  # 8 - Lib, 
+  # 9 - Lic
+  #-------------------------------------------
+  - platform: template
+    id: battery_type_text
+    name: "${friendly_name} Battery - Type"
+    lambda: |-
+      return {"Loading"};
+    icon: mdi:battery-high
+    update_interval: never
+    entity_category: diagnostic
+
+  #-------------------------------------------
+  # FAULT AND WARNING
+  #-------------------------------------------
+  - platform: template
+    id: fault
+    name: "${friendly_name} Fault"
+    lambda: |-
+      if      (id(fault_bus_over).state)                  { return {"Fault - 08 Bus over"}; }
+      else if (id(fault_bus_under).state)                 { return {"Fault - 52 Bus under"}; }
+      else if (id(fault_bus_soft_fail).state)             { return {"Fault - 09 Bus soft start"}; }
+      else if (id(fault_opvshort).state)                  { return {"Fault - 05 Bus OPV Short"}; }
+      else if (id(fault_inverter_voltage_too_low).state)  { return {"Fault - 04 Voltage low"}; }
+      else if (id(fault_inverter_voltage_too_high).state) { return {"Fault - 03 Voltage high"}; }
+      else if (id(fault_inverter_over_current).state)     { return {"Fault - 51 Over Current"}; }
+      else if (id(fault_inverter_soft_failed).state)      { return {"Fault - 53 Soft start"}; }
+      else if (id(fault_self_test_failed).state)          { return {"Fault - Self test "}; }
+      else if (id(fault_op_dc_voltage_over).state)        { return {"Fault - 06 OP DC Voltage over"}; }
+      else if (id(fault_battery_open).state)              { return {"Fault - 56 Battery open"}; }
+      else if (id(fault_current_sensor_failed).state)     { return {"Fault - 57 Current sensor"}; }
+      else if (id(fault_battery_short).state)             { return {"Fault - Battery short"}; }
+      else if (id(fault_mppt_overload).state)             { return {"Fault - MPPT overload"}; }
+      else if (id(fault_dc_dc_over_current).state)        { return {"Fault - DC DC over current"}; }
+      else if (id(warning_battery_equalization).state)                { return {"Warning - E9 Battery equalization E9"}; }
+      else if (id(warning_power_loss).state)                          { return {"Warning - Power loss"}; }
+      else if (id(warning_line_fail).state)                           { return {"Warning - Grid Fail"}; }
+      else if (id(warning_over_temperature).state)                    { return {"Warning - 02 Over Temp"}; }  //Fault codes
+      else if (id(warning_fan_lock).state)                            { return {"Warning - 01 Fan locked"}; } //Warning and fault codes
+      else if (id(warning_battery_voltage_high).state)                { return {"Warning - Battery Voltage high"}; }
+      else if (id(warning_battery_low_alarm).state)                   { return {"Warning - 04 Battery Low"}; }
+      else if (id(warning_battery_under_shutdown).state)              { return {"Warning - Battery under shutdown"}; }
+      else if (id(warning_battery_derating).state)                    { return {"Warning - Battery derating"}; }
+      else if (id(warning_over_load).state)                           { return {"Warning - 07 Overload"}; }
+      else if (id(warning_eeprom_failed).state)                       { return {"Warning - EEPROM"}; }
+      else if (id(warning_power_limit).state)                         { return {"Warning - Power Limit"}; }
+      else if (id(warning_pv_voltage_high).state)                     { return {"Warning - Solar voltage high"}; }
+      else if (id(warning_mppt_overload).state)                       { return {"Warning - MPPT Overload"}; }
+      else if (id(warning_battery_too_low_to_charge).state)           { return {"Warning - Battery low to charge"}; }
+      else if (id(warnung_low_pv_energy).state)                       { return {"Warning - Low PV energy"}; }
+      else if (id(warning_high_ac_input_during_bus_soft_start).state) { return {"Warning - High AC input during bus soft start"}; }
+      else if (id(fault_inverter_fault).state)            { return {"Fault - Inverter"}; }
+      else if (id(fault_code ).state)                     { return {"Fault - No marking"}; }
+      else                                                { return {"NONE"}; }
+    icon: mdi:alert-outline
+    update_interval: never
+    entity_category: diagnostic
+    
+    #-------------------------------------------
+    # Unnecessary sensors 
+    # whitout changes life invertor
+    #-------------------------------------------
+    #last_qpigs:
+    #  name: "${friendly_name} last_qpigs"
+    #last_qpiri:
+    #  name: "${friendly_name} last_qpiri"
+    #last_qmod:
+    #  name: "${friendly_name} last_qmod"
+    #last_qflag:
+    #  name: "${friendly_name} last_qflag"
+
+#-------------------------------------------
+# BINARY SENSORS
+#-------------------------------------------
+binary_sensor:
+  #-------------------------------------------
+  # Battery Fuse Reed magnetic sensor
+  #-------------------------------------------
+  - platform: gpio
+    name: "${friendly_name} Battery - Fuse"
+    pin: 
+      number: "$pin_reed1"
+      #mode: INPUT_PULLUP
+    device_class: door
+    #filters:
+    #  - delayed_on: 5s
+    id: reed
+    icon: mdi:fuse
+    entity_category: diagnostic
+    on_press:
+      then:
+
+  #-------------------------------------------
+  # Button 1
+  #-------------------------------------------
+  - platform: gpio
+    name: "${friendly_name} Button 1"
+    pin: "$pin_button1"
+    id: button1
+    filters:
+      - invert:
+      - delayed_on: 10ms
+    on_press:
+      then:
+        - lambda: id(rtttl_buzzer).set_gain(0.4);
+        - switch.toggle: relay_1
+        - rtttl.play: 'bib:d=4,o=5,b=200:16e6'
+    entity_category: diagnostic
+  #-------------------------------------------
+  # Button 2
+  #-------------------------------------------
+  - platform: gpio
+    name: "${friendly_name} Button 2"
+    pin: "$pin_button2"
+    id: button2
+    filters:
+      - invert:
+      - delayed_on: 10ms
+    on_press:
+      then:
+        - lambda: id(rtttl_buzzer).set_gain(0.4);
+        - switch.toggle: relay_2
+        - rtttl.play: 'bib:d=4,o=5,b=200:16e6'
+    entity_category: diagnostic
+  #-------------------------------------------
+  # Button 3
+  #-------------------------------------------
+  - platform: gpio
+    name: "${friendly_name} Button 3"
+    pin: "$pin_button3"
+    id: button3
+    filters:
+      - invert:
+      - delayed_on: 10ms
+    on_press:
+      then:
+        - lambda: id(rtttl_buzzer).set_gain(0.4);
+        - switch.toggle: relay_3
+        - rtttl.play: 'bib:d=4,o=5,b=200:16e6'
+    entity_category: diagnostic
+  #-------------------------------------------
+  # Button 4
+  #-------------------------------------------
+  - platform: gpio
+    name: "${friendly_name} Button 4"
+    pin: "$pin_button4"
+    id: button4
+    filters:
+      - invert:
+      - delayed_on: 10ms
+    on_press:
+      then:
+        - lambda: id(rtttl_buzzer).set_gain(0.4);
+        - switch.toggle: relay_4
+        - rtttl.play: 'bib:d=4,o=5,b=200:16e6'
+    entity_category: diagnostic
+  #-------------------------------------------
+  # Pir sensor SB312 
+  #-------------------------------------------
+  - platform: gpio
+    pin: 
+      number: "$pin_pir"
+    name: "${friendly_name} Motion"
+    id: motion
+    device_class: motion
+    filters:
+      - delayed_off: 15s
+
+  #-------------------------------------------
+  # PIP SOLAR - BINARY_SENSORS
+  #-------------------------------------------
+  - platform: pipsolar
+    pipsolar_id: effekta_ax
+    #-------------------------------------------
+    # Unnecessary sensors
+    #-------------------------------------------
+    # b7: false
+    #add_sbu_priority_version:
+    #  name: "${friendly_name} add_sbu_priority_version"
+    # b6: false
+    #configuration_status:
+    #  name: "${friendly_name} configuration_status"
+    # b5: true
+    #scc_firmware_version:
+    #  name: "${friendly_name} scc_firmware_version"
+    # b4
+    load_status:
+      name: "${friendly_name} Status - Load"
+      entity_category: diagnostic
+    # b3: false
+    #battery_voltage_to_steady_while_charging:
+    #  name: "${friendly_name} battery_voltage_to_steady_while_charging"
+    # b2
+    charging_status:
+      name: "${friendly_name} Status - Charging"
+      entity_category: diagnostic
+    # b1
+    scc_charging_status:
+      name: "${friendly_name} Status - DC Charging"
+      entity_category: diagnostic
+    # b0
+    ac_charging_status:
+      name: "${friendly_name} Status - AC Charging"
+      entity_category: diagnostic
+    # b10
+    charging_to_floating_mode:
+      name: "${friendly_name} Status - Float Charging"
+      entity_category: diagnostic
+    # b9  
+    switch_on:
+      name: "${friendly_name} Switch On"
+      entity_category: diagnostic
+
+    #-------------------------------------------
+    # QFLAGS READY
+    #-------------------------------------------
+    #-------------------------------------------
+    # Unnecessary sensors
+    #-------------------------------------------
+    #silence_buzzer_open_buzzer:
+    #  name: "${friendly_name} silence_buzzer_open_buzzer"
+    #overload_bypass_function:
+    #  name: "${friendly_name} overload_bypass_function"
+    #overload_restart_function:
+    #  name: "${friendly_name} overload_restart_function"
+    #over_temperature_restart_function:
+    #  name: "${friendly_name} over_temperature_restart_function"
+    #backlight_on:
+    #  name: "${friendly_name} backlight_on"
+    #lcd_escape_to_default:
+    #  name: "${name} lcd_escape_to_default"
+    #fault_code:
+    #  name: "${friendly_name} Fault Code"
+
+    power_saving:
+      name: "${friendly_name} Power Saving"
+      entity_category: diagnostic
+
+    #-------------------------------------------
+    # NOT SUPPORT ON THIS INVERTOR
+    #-------------------------------------------
+    # b8: Axpert V series
+    #dustproof_installed:
+    #  name: "${friendly_name} dustproof_installed"
+    #charge_onoff:
+    #  name: "${friendly_name} Charge onoff"
+    #discharge_onoff:
+    #  name: "${friendly_name} Discharge onoff"
+    #discharge_with_standby_onoff:
+    #  name: "${friendly_name} Discharge whit standby onoff"
+    
+    #-------------------------------------------
+    # FAULT AND WARNING
+    #-------------------------------------------
+    warnings_present:
+      name: "${friendly_name} Warnings"
+      entity_category: diagnostic
+      icon: mdi:alert-outline
+      on_state:
+        then:
+          component.update: fault
+    
+    faults_present:
+      name: "${friendly_name} Faults"
+      entity_category: diagnostic
+      icon: mdi:alert-outline
+      on_state:
+        then:
+          component.update: fault
+
+    warning_power_loss:
+      id: warning_power_loss
+      internal: true
+      
+    fault_inverter_fault:
+      id: fault_inverter_fault
+      internal: true
+      
+    fault_bus_over:
+      id: fault_bus_over
+      internal: true
+      
+    fault_bus_under:
+      id: fault_bus_under
+      internal: true
+      
+    fault_bus_soft_fail:
+      id: fault_bus_soft_fail
+      internal: true
+      
+    warning_line_fail:
+      id: warning_line_fail
+      internal: true
+      
+    fault_opvshort:
+      id: fault_opvshort
+      internal: true
+      
+    fault_inverter_voltage_too_low:
+      id: fault_inverter_voltage_too_low
+      internal: true
+      
+    fault_inverter_voltage_too_high:
+      id: fault_inverter_voltage_too_high
+      internal: true
+      
+    warning_over_temperature:
+      id: warning_over_temperature
+      internal: true
+      
+    warning_fan_lock:
+      id: warning_fan_lock
+      internal: true
+      
+    warning_battery_voltage_high:
+      id: warning_battery_voltage_high
+      internal: true
+      
+    warning_battery_low_alarm:
+      id: warning_battery_low_alarm
+      internal: true
+      
+    warning_battery_under_shutdown:
+      id: warning_battery_under_shutdown
+      internal: true
+      
+    warning_battery_derating:
+      id: warning_battery_derating
+      internal: true
+      
+    warning_over_load:
+      id: warning_over_load
+      internal: true
+      
+    warning_eeprom_failed:
+      id: warning_eeprom_failed
+      internal: true
+      
+    fault_inverter_over_current:
+      id: fault_inverter_over_current
+      internal: true
+      
+    fault_inverter_soft_failed:
+      id: fault_inverter_soft_failed
+      internal: true
+      
+    fault_self_test_failed:
+      id: fault_self_test_failed
+      internal: true
+      
+    fault_op_dc_voltage_over:
+      id: fault_op_dc_voltage_over
+      internal: true
+      
+    fault_battery_open:
+      id: fault_battery_open
+      internal: true
+      
+    fault_current_sensor_failed:
+      id: fault_current_sensor_failed
+      internal: true
+      
+    fault_battery_short:
+      id: fault_battery_short
+      internal: true
+      
+    warning_power_limit:
+      id: warning_power_limit
+      internal: true
+      
+    warning_pv_voltage_high:
+      id: warning_pv_voltage_high
+      internal: true
+      
+    fault_mppt_overload:
+      id: fault_mppt_overload
+      internal: true
+      
+    warning_mppt_overload:
+      id: warning_mppt_overload
+      internal: true
+      
+    warning_battery_too_low_to_charge:
+      id: warning_battery_too_low_to_charge
+      internal: true
+      
+    fault_dc_dc_over_current:
+      id: fault_dc_dc_over_current
+      internal: true
+      
+    fault_code:
+      id: fault_code
+      internal: true
+      on_state:
+        then:
+          component.update: fault
+      
+    warnung_low_pv_energy:
+      id: warnung_low_pv_energy
+      internal: true
+      
+    warning_high_ac_input_during_bus_soft_start:
+      id: warning_high_ac_input_during_bus_soft_start
+      internal: true
+      
+    warning_battery_equalization:
+      id: warning_battery_equalization
+      entity_category: diagnostic
+
+#-------------------------------------------
+# LIGHTS
+#-------------------------------------------
+light:
+  #-------------------------------------------
+  # LED 1
+  #-------------------------------------------
+  - platform: binary
+    name: "${friendly_name} Led 1"
+    output: led1_output
+    id: light_led1
+    restore_mode: RESTORE_DEFAULT_ON
+    internal: True
+
+  #-------------------------------------------
+  # LED 2
+  #-------------------------------------------
+  - platform: binary
+    name: "${friendly_name} Led 2"
+    output: led2_output
+    id: light_led2
+    restore_mode: RESTORE_DEFAULT_ON
+    internal: True
+
+  #-------------------------------------------
+  # LED 3
+  #-------------------------------------------
+  - platform: binary
+    name: "${friendly_name} Led 3"
+    output: led3_output
+    id: light_led3
+    restore_mode: RESTORE_DEFAULT_ON
+    internal: True
+
+  #-------------------------------------------
+  # LED 4
+  #-------------------------------------------
+  - platform: binary
+    name: "${friendly_name} Led 4"
+    output: led4_output
+    id: light_led4
+    restore_mode: RESTORE_DEFAULT_ON
+    internal: True
+
+#-------------------------------------------
+# SWITCHES
+#-------------------------------------------
+switch:
+  #-------------------------------------------
+  # LCD BACKLIGHT
+  #-------------------------------------------
+  - platform: template
+    name: "${friendly_name} Backlight - LCD"
+    id: backlight_lcd
+    optimistic: True
+    entity_category: config
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      then:
+        - lambda: |-
+            id(pcfdisplay).backlight();
+    on_turn_off:
+      then:
+        - lambda: |-
+            id(pcfdisplay).no_backlight();
+
+  #-------------------------------------------
+  # RELAY 1
+  #-------------------------------------------
+  - platform: gpio
+    name: "${friendly_name} Relay 1 - Grid"
+    pin: $pin_relay1
+    icon: mdi:transmission-tower
+    id: relay_1
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on: 
+      then:
+        - light.turn_on: light_led1
+    on_turn_off: 
+      then:
+        - light.turn_off: light_led1
+  #-------------------------------------------
+  # RELAY 2
+  #-------------------------------------------
+  - platform: gpio
+    name: "${friendly_name} Relay 2 - House"
+    pin: $pin_relay2
+    id: relay_2
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on: 
+      then:
+        - light.turn_on: light_led2
+    on_turn_off: 
+      then:
+        - light.turn_off: light_led2
+  #-------------------------------------------
+  # RELAY 3
+  #-------------------------------------------
+  - platform: gpio
+    name: "${friendly_name} Relay 3 - Cellar"
+    pin: $pin_relay3
+    id: relay_3
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on: 
+      then:
+        - light.turn_on: light_led3
+    on_turn_off: 
+      then:
+        - light.turn_off: light_led3
+  #-------------------------------------------
+  # RELAY 4
+  #-------------------------------------------
+  - platform: gpio
+    name: "${friendly_name} Relay 4 - Socket"
+    pin: $pin_relay4
+    icon: mdi:power-socket-de
+    id: relay_4
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on: 
+      then:
+        - light.turn_on: light_led4
+    on_turn_off: 
+      then:
+        - light.turn_off: light_led4
+
+  #-------------------------------------------
+  # Solid state FVE
+  #-------------------------------------------
+  - platform: gpio
+    name: "${friendly_name} Relay 5 - FVE"
+    pin: $pin_solid_state
+    id: solid_state_fve
+    icon: mdi:solar-panel-large
+    restore_mode: RESTORE_DEFAULT_ON
+    #on_turn_on: 
+    #  then:
+    #    - light.turn_on: light_led4
+    #on_turn_off: 
+    #  then:
+    #    - light.turn_off: light_led4
+
+  #-------------------------------------------
+  # PIP SOLAR - SWITCHES
+  #-------------------------------------------
+  - platform: pipsolar
+    pipsolar_id: effekta_ax
+    #-------------------------------------------
+    # Solar Panel - Power balance 31
+    # QPIRI COMMAND X
+    # 0: PV input max current will be the max charged current;
+    # 1: PV input max power will be the sum of the max charged power and loads power.
+    #-------------------------------------------
+    pv_power_balance:
+      name: "${friendly_name} Solar - Power Balance"
+      icon: mdi:code-tags
+      entity_category: config
+
+    #-------------------------------------------
+    # QFLAG COMMAND
+    #-------------------------------------------
+    # x backlight_on
+    backlight:
+      name: "${friendly_name} Backlight - Inverter"
+      id: backlight_invertor
+      icon: mdi:monitor
+      entity_category: config
+    # a silence_buzzer_open_buzzer
+    buzzer:
+      name: "${friendly_name} Buzzer - Inverter"
+      icon: mdi:volume-low
+      entity_category: config
+    # b overload_bypass_function
+    # Overload bypass: When enabled, the unit will transfer to line mode if overload occurs in battery mode.
+    overload_bypass:
+      name: "${friendly_name} Overload - Bypass"
+      icon: mdi:thermometer-alert
+      entity_category: config
+    # k lcd_escape_to_default
+    lcd_default:
+      name: "${friendly_name} LCD - Default"
+      icon: mdi:monitor-edit
+      entity_category: config
+    # u overload_restart_function
+    overload_restart:
+      name: "${friendly_name} Overload - Restart"
+      icon: mdi:alert-outline
+      entity_category: config
+    # v over_temperature_restart_function
+    over_temperature:
+      name: "${friendly_name} Over - Temperature"
+      icon: mdi:thermometer-alert
+      entity_category: config
+    # y alarm_on_when_primary_source_interrupt
+    alarm_primary_interrupt:
+      name: "${friendly_name} Alarm - primary interrupt"
+      icon: mdi:alert-outline
+      entity_category: config
+    # z fault_code_record
+    fault_record:
+      name: "${friendly_name} Fault Code Record"
+      icon: mdi:thermometer-alert
+      entity_category: config
+    # j power_saving
+    power_saving:
+      name: "${friendly_name} Power Saving"
+      icon: mdi:battery-heart-outline
+      entity_category: config
+
+    #-------------------------------------------
+    # AC - Input Voltage Range
+    # QPIRI X
+    # Page 03 AC voltage range input
+    # 0: Appliance 90-280VAC
+    # 1: UPS 170-280VAC better
+    #-------------------------------------------
+    #input_voltage_range:
+    #  name: "${friendly_name} Grid - Voltage Range"
+    #  icon: mdi:code-tags
+
+    #-------------------------------------------
+    # THIS SETTINGS USED IN SELECTED COMPONENT
+    #-------------------------------------------
+    #output_source_priority_utility:
+    #  name: "${friendly_name} output_source_priority_utility"
+    #output_source_priority_solar:
+    #  name: "${friendly_name} output_source_priority_solar"
+    #output_source_priority_battery:
+    #  name: "${friendly_name} output_source_priority_battery"
+    # pv_ok_condition_for_parallel:
+    #   name: "${friendly_name} pv_ok_condition_for_parallel"
+
+#-------------------------------------------
+# RTTTL
+#-------------------------------------------
+rtttl:
+  output: buzzer_speaker
+  id: rtttl_buzzer
+  on_finished_playback:
+    then:
+      - lambda: id(rtttl_buzzer).set_gain(1.0);
+
+#-------------------------------------------
+# NUMBER
+#-------------------------------------------
+number:
+  #-------------------------------------------
+  # Buzzer Volume
+  #-------------------------------------------
+  - platform: template
+    name: "${friendly_name} Buzzer - ESP"
+    optimistic: true
+    min_value: 0.4
+    max_value: 1.0
+    step: 0.1
+    mode: slider
+    on_value:
+      then:
+      #- output.set_level:
+      #   id: buzzer_speaker
+      #   level: !lambda "return x;"
+        - lambda: id(rtttl_buzzer).set_gain(x);
+#-------------------------------------------
+# OUTPUTS
+#-------------------------------------------
+output:
+  #-------------------------------------------
+  # Buzzer - output
+  #-------------------------------------------
+  - platform: ledc
+    pin: "$pin_buzzer"
+    id: buzzer_speaker
+    zero_means_zero: True
+
+  #-------------------------------------------
+  # Led 1
+  #-------------------------------------------
+  - platform: gpio
+    id: led1_output
+    pin: $pin_led1
+  #-------------------------------------------
+  # Led 2
+  #-------------------------------------------
+  - platform: gpio
+    id: led2_output
+    pin: 
+      number: $pin_led2
+      ignore_strapping_warning: true
+      
+  #-------------------------------------------
+  # Led 3
+  #-------------------------------------------
+  - platform: gpio
+    id: led3_output
+    pin: 
+      number: $pin_led3
+      ignore_strapping_warning: true
+  #-------------------------------------------
+  # Led 4
+  #-------------------------------------------
+  - platform: gpio
+    id: led4_output
+    pin: $pin_led4
+
+  #-------------------------------------------
+  # Output - Battery Back
+  # Setup: 28.0V
+  #-------------------------------------------
+  - platform: pipsolar
+    pipsolar_id: effekta_ax
+    battery_recharge_voltage:
+      id: battery_back_voltage
+      possible_values: [0.0,24.0,24.5,25.0,25.5,26.0,26.5,27.0,27.5,28.0,28.5,29.0,29.5,30.0,30.5,31.0,31.5,32.0]
+
+  #-------------------------------------------
+  # Output - Battery Absorption charge voltage
+  # Setup: 29.0V
+  #-------------------------------------------
+  - platform: pipsolar
+    pipsolar_id: effekta_ax
+    battery_bulk_voltage:
+      id: battery_absorption_voltage
+      possible_values: [24.0,24.1,24.2,24.3,24.4,24.5,24.6,24.7,24.8,24.9,25.0,25.1,25.2,25.3,25.4,25.5,25.6,25.7,25.8,25.9,26.0,26.1,26.2,26.3,26.4,26.5,26.6,26.7,26.8,26.9,27.0,27.1,27.2,27.3,27.4,27.5,27.6,27.7,27.8,27.9,28.0,28.1,28.2,28.3,28.4,28.5,28.6,28.7,28.8,28.9,29.0,29.1,29.2,29.3,29.4,29.5,29.6,29.7,29.8,29.9,30.0,30.1,30.2,30.3,30.4,30.5,30.6,30.7,30.8,30.9,31.0,31.1,31.2,31.3,31.4,31.5,31.6,31.7,31.8,31.9,32.0]
+
+  #-------------------------------------------
+  # Output - Battery Float Charge Voltage
+  # Setup: 27.0V
+  #-------------------------------------------
+  - platform: pipsolar
+    pipsolar_id: effekta_ax
+    battery_float_voltage:
+      id: battery_float_voltage
+      possible_values: [24.0,24.1,24.2,24.3,24.4,24.5,24.6,24.7,24.8,24.9,25.0,25.1,25.2,25.3,25.4,25.5,25.6,25.7,25.8,25.9,26.0,26.1,26.2,26.3,26.4,26.5,26.6,26.7,26.8,26.9,27.0,27.1,27.2,27.3,27.4,27.5,27.6,27.7,27.8,27.9,28.0,28.1,28.2,28.3,28.4,28.5,28.6,28.7,28.8,28.9,29.0,29.1,29.2,29.3,29.4,29.5,29.6,29.7,29.8,29.9,30.0,30.1,30.2,30.3,30.4,30.5,30.6,30.7,30.8,30.9,31.0,31.1,31.2,31.3,31.4,31.5,31.6,31.7,31.8,31.9,32.0]
+
+  #-------------------------------------------
+  # Output - Battery Grid Voltage
+  # Setup: 24.0V
+  #-------------------------------------------
+  - platform: pipsolar
+    pipsolar_id: effekta_ax
+    battery_recharge_voltage:
+      id: battery_recharge_voltage
+      possible_values: [0.0,22.0,22.5,23.0,23.5,24.0,24.5,25.0,25.5,26.0,26.5,27.0,27.5,28.0,28.5]
+
+  #-------------------------------------------
+  # Output - Battery Under voltage
+  # Setup: 21.7V
+  #-------------------------------------------
+  - platform: pipsolar
+    pipsolar_id: effekta_ax
+    battery_under_voltage:
+      id: battery_under_voltage
+      possible_values: [20.0,20.1,20.2,20.3,20.4,20.5,20.6,20.7,20.8,20.9,21.0,21.1,21.2,21.3,21.4,21.5,21.6,21.7,21.8,21.9,22.0,22.1,22.2,22.3,22.4,22.5,22.6,22.7,22.8,22.9,23.0,23.1,23.2,23.3,23.4,23.5,23.6,23.7,23.8,23.9,24.0,24.1,24.2,24.3,24.4,24.5,24.6,24.7,24.8,24.9,25.0,25.1,25.2,25.3,25.4,25.5,25.6,25.7,25.8,25.9,26.0,26.1,26.2,26.3,26.4,26.5,26.6,26.7,26.8,26.9,27.0]
+
+#-------------------------------------------
+# SELECTS
+#-------------------------------------------
+select:
+  #-------------------------------------------
+  # Select - Battery Back voltage
+  # Setup: 28.0V
+  #-------------------------------------------
+  - platform: template
+    name: Battery - Voltage Back
+    id: set_back
+    optimistic: True
+    initial_option: "28.0"
+    restore_value: true
+    entity_category: config
+    on_value:
+      then:
+        - output.pipsolar.set_level:
+            id: battery_back_voltage
+            value: !lambda |- 
+              float float_back = std::stof(id(set_back).state); // change to float number value
+              return float_back;
+    options: ["0.0","24.0","24.5","25.0","25.5","26.0","26.5","27.0","27.5","28.0","28.5","29.0","29.5","30.0","30.5","31.0","31.5","32.0"]
+      
+  #-------------------------------------------
+  # Select - Battery Absorption charge voltage
+  # Setup: 29.0V
+  #-------------------------------------------
+  - platform: template
+    name: Battery - Voltage Absorption
+    id: set_absorption
+    optimistic: True
+    initial_option: "29.0"
+    restore_value: true
+    entity_category: config
+    on_value:
+      then:
+        - output.pipsolar.set_level:
+            id: battery_absorption_voltage
+            value: !lambda |- 
+              float float_absor = std::stof(id(set_absorption).state); // change to float number value
+              return float_absor;
+    options: ["24.0","24.1","24.2","24.3","24.4","24.5","24.6","24.7","24.8","24.9","25.0","25.1","25.2","25.3","25.4","25.5","25.6","25.7","25.8","25.9","26.0","26.1","26.2","26.3","26.4","26.5","26.6","26.7","26.8","26.9","27.0","27.1","27.2","27.3","27.4","27.5","27.6","27.7","27.8","27.9","28.0","28.1","28.2","28.3","28.4","28.5","28.6","28.7","28.8","28.9","29.0","29.1","29.2","29.3","29.4","29.5","29.6","29.7","29.8","29.9","30.0","30.1","30.2","30.3","30.4","30.5","30.6","30.7","30.8","30.9","31.0","31.1","31.2","31.3","31.4","31.5","31.6","31.7","31.8","31.9","32.0"]
+
+
+  #-------------------------------------------
+  # Select - Battery Float charge voltage
+  # Setup: 27.0V
+  #-------------------------------------------
+  - platform: template
+    name: Battery - Voltage Float
+    id: set_float
+    optimistic: True
+    initial_option: "27.0"
+    restore_value: true
+    entity_category: config
+    on_value:
+      then:
+        - output.pipsolar.set_level:
+            id: battery_float_voltage
+            value: !lambda |- 
+              float float_float = std::stof(id(set_float).state); // change to float number value
+              return float_float;
+    options: ["24.0","24.1","24.2","24.3","24.4","24.5","24.6","24.7","24.8","24.9","25.0","25.1","25.2","25.3","25.4","25.5","25.6","25.7","25.8","25.9","26.0","26.1","26.2","26.3","26.4","26.5","26.6","26.7","26.8","26.9","27.0","27.1","27.2","27.3","27.4","27.5","27.6","27.7","27.8","27.9","28.0","28.1","28.2","28.3","28.4","28.5","28.6","28.7","28.8","28.9","29.0","29.1","29.2","29.3","29.4","29.5","29.6","29.7","29.8","29.9","30.0","30.1","30.2","30.3","30.4","30.5","30.6","30.7","30.8","30.9","31.0","31.1","31.2","31.3","31.4","31.5","31.6","31.7","31.8","31.9","32.0"]
+
+  #-------------------------------------------
+  # Select - Battery Under voltage
+  # Setup: 21.7V
+  #-------------------------------------------
+  - platform: template
+    name: Battery - Voltage Under
+    id: set_under
+    optimistic: True
+    initial_option: "21.7"
+    restore_value: true
+    entity_category: config
+    on_value:
+      then:
+        - output.pipsolar.set_level:
+            id: battery_under_voltage
+            value: !lambda |- 
+              float float_under = std::stof(id(set_under).state); // change to float number value
+              return float_under;
+    options: ["20.0","20.1","20.2","20.3","20.4","20.5","20.6","20.7","20.8","20.9","21.0","21.1","21.2","21.3","21.4","21.5","21.6","21.7","21.8","21.9","22.0","22.1","22.2","22.3","22.4","22.5","22.6","22.7","22.8","22.9","23.0","23.1","23.2","23.3","23.4","23.5","23.6","23.7","23.8","23.9","24.0","24.1","24.2","24.3","24.4","24.5","24.6","24.7","24.8","24.9","25.0","25.1","25.2","25.3","25.4","25.5","25.6","25.7","25.8","25.9","26.0","26.1","26.2","26.3","26.4","26.5","26.6","26.7","26.8","26.9","27.0"]
+
+  #-------------------------------------------
+  # Select - Battery Grid voltage
+  # Setup: 28.0V
+  #-------------------------------------------
+  - platform: template
+    name: Battery - Voltage Grid
+    id: set_grid
+    optimistic: True
+    initial_option: "24.0"
+    restore_value: true
+    entity_category: config
+    on_value:
+      then:
+        - output.pipsolar.set_level:
+            id: battery_recharge_voltage
+            value: !lambda |- 
+              float float_grid = std::stof(id(set_grid).state); // change to float number value
+              return float_grid;
+    options: ["0.0","22.0","22.5","23.0","23.5","24.0","24.5","25.0","25.5","26.0","26.5","27.0","27.5","28.0","28.5"]
+
+  #-------------------------------------------
+  # Battery charge/discharge controlling command 
+  # not send data
+  # See MAX_Communication_Protocol_20210217.pdf page 21
+  #-------------------------------------------
+  - platform: pipsolar
+    pipsolar_id: effekta_ax
+    
+    charging_discharging_control:
+      entity_category: config
+      name: "${friendly_name} charging discharging control"
+      optionsmap:
+        "On C/D": "PBATCD111"
+        "On C only solar 2A AC/Off D/Invertor off": "PBATCD011"
+        "101": "PBATCD101"
+        "110": "PBATCD110"
+        "010": "PBATCD010"
+        "100": "PBATCD100"
+        "001": "PBATCD001"
+        "000": "PBATCD000"
+      statusmap:
+        "111": "On C/D"
+        "011": "On C only solar 2A AC/Off D/Invertor off"
+        "101": "On C only solar 2A AC/Off D/Invertor standby"
+        "110": "Off C/On D"
+        "010": "Off C/D/Invertor off (PV/Grid no present)"
+        "100": "Off C/D/Invertor standby"
+        "001": "N/A"
+        "000": "Clean and return previous status."
+
+  #-------------------------------------------
+  # Select - Output Source Priority
+  #-------------------------------------------
+  - platform: pipsolar
+    pipsolar_id: effekta_ax
+    output_source_priority:
+      id: effekta_ax_output_source_priority_select
+      name: "${friendly_name} Source Priority - Output"
+      entity_category: config
+      optionsmap:
+        "Utility first": "POP00"
+        "Solar only": "POP01"
+        "Solar Battery Utility": "POP02"
+      statusmap:
+        "0": "Utility first"
+        "1": "Solar first"
+        "2": "Solar Battery Utility"
+
+  #-------------------------------------------
+  # Select - Charger Source priority
+  #-------------------------------------------
+  - platform: pipsolar
+    pipsolar_id: effekta_ax
+    charger_source_priority:
+      name: "${friendly_name} Source Priority - Charge"
+      entity_category: config
+      optionsmap:
+        "Utility first": "PCP00"
+        "Solar first": "PCP01"
+        "Solar and utility": "PCP02"
+        "Solar charging only": "PCP03"
+      statusmap:
+        "0": "Utility first"
+        "1": "Solar first"
+        "2": "Solar and utility"
+        "3": "Solar only"
+
+  #-------------------------------------------
+  # Charger Grid Current
+  #-------------------------------------------
+  - platform: pipsolar
+    pipsolar_id: effekta_ax
+    current_max_ac_charging_current:
+      name: "${friendly_name} Charge - Current Grid"
+      entity_category: config
+      optionsmap:
+        #"2A": "MUCHGC0002"
+        #"10A": "MUCHGC0010"
+        "20A": "MUCHGC020"
+        "30A": "MUCHGC030"
+        #"40A": "MUCHGC0040"
+        #"50A": "MUCHGC0050"
+        #"60A": "MUCHGC0060"
+        #"70A": "MUCHGC0070"
+        #"80A": "MUCHGC0080"
+        #"90A": "MUCHGC0090"
+        #"100A": "MUCHGC0100"
+        #"110A": "MUCHGC0110"
+        #"120A": "MUCHGC0120"
+      statusmap:
+        #"2": "2A"
+        #"10": "10A"
+        "20": "20A"
+        "30": "30A"
+        #"40": "40A"
+        #"50": "50A"
+        #"60": "60A"
+        #"70": "70A"
+        #"80": "80A"
+        #"90": "90A"
+        #"100": "100A"
+        #"110": "110A"
+        #"120": "120A"
+
+  #-------------------------------------------
+  # Charger Solar Current
+  #-------------------------------------------
+  - platform: pipsolar
+    pipsolar_id: effekta_ax
+    current_max_charging_current:
+      name: ${friendly_name} Charge - Current Solar
+      entity_category: config
+      optionsmap:
+        "10A": "MCHGC0010"
+        "20A": "MCHGC0020"
+        "30A": "MCHGC0030"
+        "40A": "MCHGC0040"
+        "50A": "MCHGC0050"
+        "60A": "MCHGC0060"
+        "70A": "MCHGC0070"
+        "80A": "MCHGC0080"
+        "90A": "MCHGC0090"
+        #"100A": "MCHGC100"
+        #"110A": "MCHGC110"
+        #"120A": "MCHGC120"
+      statusmap:
+        "10": "10A"
+        "20": "20A"
+        "30": "30A"
+        "40": "40A"
+        "50": "50A"
+        "60": "60A"
+        "70": "70A"
+        "80": "80A"
+        "90": "90A"
+        #"100": "100A"
+        #"110": "110A"
+        #"120": "120A"
+        
+  #- platform: pipsolar
+  #  pipsolar_id: effekta_ax
+  #  battery_bulk_voltage:
+  #    name: bulk voltage battery
+  #    optionsmap:
+  #      "28.8": "28.8"
+  #      "28.9": "28.9"
+  #      "29.0": "29.0"
+  #    statusmap:
+  #      "28.8": "28.8V"
+  #      "28.9": "28.9V"
+  #      "29.0": "29.0V"
+
+#-------------------------------------------
+# TIME COMPONENT
+#-------------------------------------------
+time:
+  - platform: sntp
+
+#-------------------------------------------
+# DISPLAY
+# LCD CRYSTAL CHARACTER 20x4
+#-------------------------------------------
+display:
+  - platform:   lcd_pcf8574
+    id:         pcfdisplay
+    dimensions: $dimensions_size
+    address:    $pcf_adresse
+    update_interval: 5s
+    #rotation: 90
+    user_characters:
+# SIGNAL
+      - position: 4 # \x04
+        data: #signal <25%
+          - 0b00000
+          - 0b00000
+          - 0b00000
+          - 0b00000
+          - 0b00000
+          - 0b00000
+          - 0b10000
+          - 0b10000
+
+      - position: 5 # \x05
+        data: #signal <50%
+          - 0b00000
+          - 0b00000
+          - 0b00000
+          - 0b00000
+          - 0b00100
+          - 0b00100
+          - 0b10100
+          - 0b10100
+
+      - position: 6 # \x06
+        data: #signal <75%
+          - 0b00000
+          - 0b00000
+          - 0b00001
+          - 0b00001
+          - 0b00101
+          - 0b00101
+          - 0b10101
+          - 0b10101
+
+      - position: 7 # \x07
+        data: #signal none
+          - 0b10100
+          - 0b01000
+          - 0b10101
+          - 0b00001
+          - 0b00101
+          - 0b00101
+          - 0b10101
+          - 0b10101
+
+    lambda: |-
+      //38.2°C 38% AIQ4 W
+      //1000/1000W 24.7V
+
+      //--------------------------------------------------------------------------
+      // TEMPERATURE
+      //--------------------------------------------------------------------------
+      // TEMP
+      it.printf(0, 0, "%.1fC|%.0f%%", id(aht21_temperature).state, id(aht21_humidity).state);
+
+      //--------------------------------------------------------------------------
+      // AIQ
+      //--------------------------------------------------------------------------
+      it.printf(10, 0, isnan(id(aqi_index).state) ? "AQI0" : "AQI%.0f", id(aqi_index).state);
+
+      //--------------------------------------------------------------------------
+      // WIFI SIGNAL
+      //--------------------------------------------------------------------------
+      int signal_wifi = int(id(signal_strange).state);  //convert state to int
+      if (signal_wifi < 0 && signal_wifi >= -60)        { it.printf(15, 0, "\x06"); }
+      else if (signal_wifi < -50 && signal_wifi >= -75) { it.printf(15, 0, "\x05"); }
+      else if (signal_wifi < -70 && signal_wifi >= -90) { it.printf(15, 0, "\x04"); }
+      else {                                              it.printf(15, 0, "\x07"); }
+
+      //--------------------------------------------------------------------------
+      // ELEXTRICITY
+      //--------------------------------------------------------------------------
+      it.printf(0, 1, "%.0f/%.0fW|%.1fV", id(solar_power).state, id(load_power).state, id(battery_voltage).state);
