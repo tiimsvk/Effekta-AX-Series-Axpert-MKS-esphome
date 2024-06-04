@@ -22,6 +22,7 @@ Pin     | Digitalny izol. | ESP32
 
 
 Yaml v prilohách a v esphome následne uvidíme jednotlivé snezory:
+
 ![Clipboard02](https://github.com/tiimsvk/Effekta-AX-Series-Axpert-MKS-esphome/assets/52893640/2c1ff83c-be19-49c9-927d-beba2932220b)
 
 Je potrebné ale vložiť upravený komponent, ktorý pridáva a opravuje niektoré chyby [pipsolar.zip](https://github.com/user-attachments/files/15545178/pipsolar.zip).
