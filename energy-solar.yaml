@@ -9,10 +9,12 @@
 # -Segment display? 
 # -Mosfet output 24V
 
+# back battery voltage not support check log and find command
 #-------------------------------------------
 # REVISION 
 #-------------------------------------------
 # 2024.05.09 - Fisrt version
+# 2024.07.18 - Fixed send command back battery
 
 #-------------------------------------------
 # SUBTITUTIONS - basic definitions and description of the device
@@ -487,11 +489,12 @@ uart:
     parity: EVEN
     stop_bits: 1
 
-dallas:
-  - pin: 
+one_wire:
+  - platform: gpio
+    pin: 
       number: "$dallas_pin"
       ignore_strapping_warning: true
-    update_interval: $update_time
+    #update_interval: $update_time
 
 #-------------------------------------------
 # ESP - MAIN SETTINGS
@@ -500,7 +503,7 @@ esphome:
   name: energy-solar
   project:
     name: "studiotiim.energy_solar"
-    version: 2024.05.1.0.0
+    version: 2024.07.1.0.1
 
 esp32:
   board: esp32dev
@@ -573,6 +576,9 @@ external_components:
     components:
       - pipsolar
 
+button:
+  platform: restart
+  name: "${friendly_name} Restart"
 #-------------------------------------------
 # STATUS LED
 #-------------------------------------------
@@ -606,7 +612,7 @@ sensor:
   # DALLAS temperature sensor - DS18B20 
   # connected 4.7k to VCC 
   #-------------------------------------------
-  - platform: dallas
+  - platform: dallas_temp
     name: "${friendly_name} Temperature - Battery"
     address: "$dallas_address"
     id: temp_bat
@@ -638,12 +644,14 @@ sensor:
       name: "${friendly_name} AirQuality - Temperature"
       id: aht21_temperature
       filters:
-        - offset: "-2.0" # compensate temperature
+        - offset: "-4.0" # compensate temperature
       accuracy_decimals: 1
     humidity:
       name: "${friendly_name} AirQuality - Humidity"
       id: aht21_humidity
       accuracy_decimals: 0
+      filters:
+        - offset: "4.0" # compensate
     update_interval: 15s  
     address: 0x38
     
@@ -730,6 +738,42 @@ sensor:
     accuracy_decimals: 1
     unit_of_measurement: W
     icon: "mdi:flash"
+    update_interval: never
+
+  #-------------------------------------------
+  # Battery Current - template
+  #-------------------------------------------
+  - platform: template
+    name: "${friendly_name} Battery - Current"
+    id: battery_current
+    lambda: return (id(battery_discharging_current).state - id(battery_charging_current).state);
+    accuracy_decimals: 1
+    unit_of_measurement: A
+    icon: "mdi:current-ac"
+    update_interval: never
+
+  #-------------------------------------------
+  # Battery Power - template
+  #-------------------------------------------
+  - platform: template
+    name: "${friendly_name} Battery - Power"
+    id: battery_power
+    lambda: return (id(battery_power_discharging).state - id(battery_power_charging).state);
+    accuracy_decimals: 0
+    unit_of_measurement: W
+    icon: "mdi:flash"
+    update_interval: never
+
+  #-------------------------------------------
+  # Load Current - template
+  #-------------------------------------------
+  - platform: template
+    name: "${friendly_name} Load - Current"
+    id: load_current
+    lambda: return (id(load_power).state / id(load_voltage).state);
+    accuracy_decimals: 1
+    unit_of_measurement: A
+    icon: "mdi:current-ac"
     update_interval: never
 
 #-------------------------------------------
@@ -957,6 +1001,7 @@ sensor:
     #-------------------------------------------
     ac_output_voltage:
       name: "${friendly_name} Load - Voltage"
+      id: load_voltage
     ac_output_frequency:
       name: "${friendly_name} Load - Frequency"
     ac_output_apparent_power:
@@ -967,6 +1012,9 @@ sensor:
       name: "${friendly_name} Load - Power"
       icon: "mdi:flash"
       id: load_power
+      on_value: 
+        then:
+          - component.update: load_current
     output_load_percent:
       name: "${friendly_name} Load - Percent"
       
@@ -986,9 +1034,17 @@ sensor:
     battery_charging_current:
       name: "${friendly_name} Battery - Current Charging"
       id: battery_charging_current
+      on_value: 
+        then:
+          - component.update: battery_current
+          - component.update: battery_power
     battery_discharge_current:
       name: "${friendly_name} Battery - Current Discharge"
       id: battery_discharging_current
+      on_value: 
+        then:
+          - component.update: battery_current
+          - component.update: battery_power
     battery_capacity_percent:
       name: "${friendly_name} Battery"
       icon: mdi:battery
@@ -1209,7 +1265,7 @@ binary_sensor:
     entity_category: diagnostic
     on_press:
       then:
-
+        - rtttl.play: 'siren:d=8,o=5,b=100:d,e,d,e,d,e,d,e'
   #-------------------------------------------
   # Button 1
   #-------------------------------------------
@@ -1832,13 +1888,13 @@ output:
 
   #-------------------------------------------
   # Output - Battery Back
-  # Setup: 28.0V
+  # Setup: 26.5V
   #-------------------------------------------
   - platform: pipsolar
     pipsolar_id: effekta_ax
-    battery_recharge_voltage:
+    battery_redischarge_voltage:
       id: battery_back_voltage
-      possible_values: [0.0,24.0,24.5,25.0,25.5,26.0,26.5,27.0,27.5,28.0,28.5,29.0,29.5,30.0,30.5,31.0,31.5,32.0]
+      possible_values: [0.0,24.0,24.5,25.0,25.5,26.0,26.5,27.0,27.5,28.0,28.5,29.0]
 
   #-------------------------------------------
   # Output - Battery Absorption charge voltage
@@ -1868,7 +1924,7 @@ output:
     pipsolar_id: effekta_ax
     battery_recharge_voltage:
       id: battery_recharge_voltage
-      possible_values: [0.0,22.0,22.5,23.0,23.5,24.0,24.5,25.0,25.5,26.0,26.5,27.0,27.5,28.0,28.5]
+      possible_values: [22.0,22.5,23.0,23.5,24.0,24.5,25.0,25.5]
 
   #-------------------------------------------
   # Output - Battery Under voltage
@@ -1902,7 +1958,7 @@ select:
             value: !lambda |- 
               float float_back = std::stof(id(set_back).state); // change to float number value
               return float_back;
-    options: ["0.0","24.0","24.5","25.0","25.5","26.0","26.5","27.0","27.5","28.0","28.5","29.0","29.5","30.0","30.5","31.0","31.5","32.0"]
+    options: ["0.0","24.0","24.5","25.0","25.5","26.0","26.5","27.0","27.5","28.0","28.5","29.0"]
       
   #-------------------------------------------
   # Select - Battery Absorption charge voltage
@@ -1983,7 +2039,8 @@ select:
             value: !lambda |- 
               float float_grid = std::stof(id(set_grid).state); // change to float number value
               return float_grid;
-    options: ["0.0","22.0","22.5","23.0","23.5","24.0","24.5","25.0","25.5","26.0","26.5","27.0","27.5","28.0","28.5"]
+    #options: ["0.0","22.0","22.5","23.0","23.5","24.0","24.5","25.0","25.5","26.0","26.5","27.0","27.5","28.0","28.5"]
+    options: ["22.0","22.5","23.0","23.5","24.0","24.5","25.0","25.5"]
 
   #-------------------------------------------
   # Battery charge/discharge controlling command 
@@ -2155,6 +2212,17 @@ display:
     update_interval: 5s
     #rotation: 90
     user_characters:
+# LIGHTINING
+      - position: 0 # \x08
+        data: #ARROW UP
+          - 0b00001
+          - 0b00010
+          - 0b00100
+          - 0b00010
+          - 0b00010
+          - 0b10100
+          - 0b11000
+          - 0b11100
 # SIGNAL
       - position: 4 # \x04
         data: #signal <25%
@@ -2214,6 +2282,11 @@ display:
       // AIQ
       //--------------------------------------------------------------------------
       it.printf(10, 0, isnan(id(aqi_index).state) ? "AQI0" : "AQI%.0f", id(aqi_index).state);
+
+      //--------------------------------------------------------------------------
+      // LIGHTININHG
+      //--------------------------------------------------------------------------
+      if (id(solid_state_fve).state == false) {it.printf(14, 0, "\x08");}
 
       //--------------------------------------------------------------------------
       // WIFI SIGNAL
