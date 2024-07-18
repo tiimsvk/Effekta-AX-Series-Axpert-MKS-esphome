@@ -2,14 +2,9 @@
 # BUG AND REPAIR AND PLANNED
 #-------------------------------------------
 # Added:
-# -1 relay input 230AC, output 2 relay
-# -CT clamp input
-# -BL0939 power meter output
-# -Battery temperature
-# -Segment display? 
+# - supercap prevent restart after power los relay
 # -Mosfet output 24V
 
-# back battery voltage not support check log and find command
 #-------------------------------------------
 # REVISION 
 #-------------------------------------------
