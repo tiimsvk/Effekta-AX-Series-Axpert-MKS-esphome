@@ -2,22 +2,27 @@
 # BUG AND REPAIR AND PLANNED
 #-------------------------------------------
 # Added:
-# - supercap prevent restart after power los relay
+# -CT clamp input
+# -BL0939 power meter output
 # -Mosfet output 24V
+# - Fix send code change charge current solar
 
 #-------------------------------------------
 # REVISION 
 #-------------------------------------------
 # 2024.05.09 - Fisrt version
 # 2024.07.18 - Fixed send command back battery
+# 2024.12.17 - Fixed faults state in pipsolar.cpp
+#            - Add custom component JK BMS over BLE thanks: Sissy
+# 2025-09-19 - Add load energy sensor
+#            - remove friendly name
 
 #-------------------------------------------
 # SUBTITUTIONS - basic definitions and description of the device
 #-------------------------------------------
 substitutions:
-  friendly_name: energy-solar
-  device_name: energy-solar
-  created_by: "StudioTiiM 2024"
+  device_name:         energy-solar
+  created_by:         "StudioTiiM 2024"
   device_description: "Monitoring solar inverter"
 
 #-------------------------------------------
@@ -374,11 +379,11 @@ substitutions:
    # < 1 minute warm up
    # < 1 hour start
    # High resistance to siloxane and humidity
-   # Environment -40 to +85℃/5 to 95%RH
+   # Environment -40 to +85°C/5 to 95%RH
    # VDD1.71 to 1.98 V
  # Interface: I2C address: 0x53 ENS160 + 0x38 AHT21
  # Circuit: 5V power supply
- # Mpdifications: add cap 100uF GND and 1.8V out LDO
+ # Modifications: add cap 100uF GND and 1.8V out LDO
 
  # ----- DALLAS -----
   # Module: 3x Dallas DS18B20
@@ -386,7 +391,7 @@ substitutions:
    # Power consumption: 50μA
    # Measure: Battery
   dallas_pin:  GPIO0
-  update_time: 10s
+  update_time: 15s
   dallas_address: "0x18ac0a720e64ff28"
 
  # ----- BUTTONS -----
@@ -430,11 +435,15 @@ substitutions:
 
   # Relay 4: Load 3 (UPS+HEATING)
   pin_solid_state:  GPIO21 #blue
+  
  # ----- BUZZER -----
   # Module: Active Buzzer TMB-12A03
    # Specification: Rated Voltage: 3.0V Operating Voltage 2.5 - 4V / Rated current: <35mA / Sound: 82dB / Resonant Freq: 2300 +- 500 / Operating temperature: -20 - +60°C / Storage temp: -20 - +70°C / Weight: 2g
   pin_buzzer:  GPIO22
 
+ # ----- BMS -----
+  # Modul: JK-BD6A20S-10P 0.6A/100A/200A/8-20
+  
 #-------------------------------------------
 # PROTOCOLS
 #-------------------------------------------
@@ -449,7 +458,7 @@ i2c:
   scl: 
     number: $i2c_scl
     ignore_strapping_warning: true
-  scan: True
+  scan: false
   #fixed pcf8574 lcd display driver not connected to wifi (esp8266)
   # https://github.com/esphome/issues/issues/2128
   frequency: 100kHz 
@@ -465,7 +474,7 @@ uart:
     tx_pin: $uart_tx_invertor
     rx_pin: $uart_rx_invertor
     baud_rate: 2400
-    #rx_buffer_size: 512
+    rx_buffer_size: 256
     
     # DEBBUGING DEVELOPER READY CODES
     debug:
@@ -498,14 +507,18 @@ esphome:
   name: energy-solar
   project:
     name: "studiotiim.energy_solar"
-    version: 2024.07.1.0.1
+    version: 2025.09.1.0.2
 
 esp32:
-  board: esp32dev
+  board: esp32doit-devkit-v1
   framework:
     type: esp-idf
-    version: recommended
-
+    #version: recommended
+    #version: recommended
+    sdkconfig_options:
+      CONFIG_FREERTOS_UNICORE: y
+      CONFIG_ESP_TASK_WDT_TIMEOUT_S: "10"
+      
 # Enable Home Assistant API
 api:
   reboot_timeout: 120min
@@ -519,8 +532,12 @@ api:
 
 ota:
   - platform: esphome
-    password: !secret ota_pass
-
+    password: !secret ota_password
+    on_begin:
+      then:
+        - switch.turn_off: ble_client_switch0
+        - switch.turn_off: ble_client_switch1
+        
 #-------------------------------------------
 # LOGGER
 #-------------------------------------------
@@ -533,25 +550,42 @@ logger:
     # [00:00:00][W][component:204]: Component xxxxxx took a long time for an operation (x.xx s).
     # [00:00:00][W][component:205]: Components should block for at most 20-30ms.
     # Source: https://github.com/esphome/issues/issues/4717
-    component: ERROR
+    component:         ERROR
+    uart_debug:        ERROR
+    pipsolar:          ERROR
+    text_sensor:       ERROR
+    sensor:            INFO
+    pipsolar.select:   INFO
+    select:            INFO
+    esp32_ble_tracker: INFO
+    esp32_ble_client:  INFO
+  #tx_buffer_size: 320
 
 #-------------------------------------------
 # ETHERNET
 #-------------------------------------------
 wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
+  ssid:        !secret wifi_ssid
+  password:    !secret wifi_password
   manual_ip:
     static_ip: 192.168.31.210
     gateway:   192.168.31.1
     subnet:    227.227.227.0
   # Enable fallback hotspot (captive portal) in case wifi connection fails
   ap:
-    ssid: "Energy-Solar Fallback Hotspot"
-    password: "passenergysolar"
+    ssid:         "Energy-Solar Fallback Hotspot"
+    password:     "passenergysolar"
+  output_power:    17dBm
+  power_save_mode: light
 
-captive_portal:
-    
+#captive_portal:
+
+#-------------------------------------------
+# PACKAGES
+#-------------------------------------------
+packages:
+  jk_bms: !include packages/jk-bms.yaml
+
 #-------------------------------------------
 # EXTERNAL AND CUSTOM COMPONENT
 #-------------------------------------------
@@ -571,15 +605,19 @@ external_components:
     components:
       - pipsolar
 
+#-------------------------------------------
+# BUTTON
+#-------------------------------------------   
 button:
   platform: restart
-  name: "${friendly_name} Restart"
+  name:    "Restart"
+  
 #-------------------------------------------
 # STATUS LED
 #-------------------------------------------
 status_led:
   pin: 
-    number: $status_led_pin
+    number:  $status_led_pin
     inverted: True
     ignore_strapping_warning: true
     
@@ -588,7 +626,7 @@ status_led:
 #-------------------------------------------
 pipsolar:
   - uart_id: uart_invertor
-    id: effekta_ax
+    id:      effekta_ax
     update_interval: 5s # 5s update 30s whitout this settings update 3s"
 
 #-------------------------------------------
@@ -596,10 +634,23 @@ pipsolar:
 #-------------------------------------------
 sensor:
   #-------------------------------------------
+  # Mermory size free
+  #-------------------------------------------     
+  - platform: template
+    name:     Free Mem Size
+    entity_category: diagnostic
+    unit_of_measurement: kb
+    accuracy_decimals: 0
+    lambda: |-
+      size_t freeValue = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
+      return freeValue / 1024.0;
+    update_interval: 60s
+  
+  #-------------------------------------------
   # Wifi signal component
   #-------------------------------------------
   - platform: wifi_signal
-    name: "${friendly_name} Signal"
+    name: "Signal"
     id: "signal_strange"
     update_interval: 60s
 
@@ -608,7 +659,7 @@ sensor:
   # connected 4.7k to VCC 
   #-------------------------------------------
   - platform: dallas_temp
-    name: "${friendly_name} Temperature - Battery"
+    name: "Temperature - Battery"
     address: "$dallas_address"
     id: temp_bat
     entity_category: diagnostic
@@ -618,13 +669,13 @@ sensor:
   #-------------------------------------------
   - platform: ens160_i2c
     eco2:
-      name: "${friendly_name} AirQuality - eCO2"
+      name: "AirQuality - eCO2"
     tvoc:
-      name: "${friendly_name} AirQuality - TVOC" 
+      name: "AirQuality - TVOC" 
     aqi:
-      name: "${friendly_name} AirQuality - AQI"
+      name: "AirQuality - AQI"
       id: aqi_index
-    update_interval: 15s
+    update_interval: 60s
     address: 0x53
     compensation:
       temperature: aht21_temperature
@@ -636,18 +687,18 @@ sensor:
   - platform: aht10
     variant: AHT20
     temperature:
-      name: "${friendly_name} AirQuality - Temperature"
+      name: "AirQuality - Temperature"
       id: aht21_temperature
       filters:
-        - offset: "-4.0" # compensate temperature
+        - offset: "-5.7" # compensate temperature
       accuracy_decimals: 1
     humidity:
-      name: "${friendly_name} AirQuality - Humidity"
+      name: "AirQuality - Humidity"
       id: aht21_humidity
       accuracy_decimals: 0
       filters:
         - offset: "4.0" # compensate
-    update_interval: 15s  
+    update_interval: 30s  
     address: 0x38
     
   #-------------------------------------------
@@ -656,36 +707,76 @@ sensor:
   - platform: cse7761
     uart_id: uart_cse7761
     voltage:
-      name: "${friendly_name} Load - Voltage CSE"
+      name: "Load - Voltage CSE"
+      accuracy_decimals: 0
       filters:
-        offset: -2.0
+        - offset: -2.0
+        - throttle: 60s
     current_1:
-      name: "${friendly_name} Load - Current 1"
+      name: "Load - Current 1"
       filters:
         multiply: 0.75
     current_2:
-      name: "${friendly_name} Load - Current 2"
+      name: "Load - Current 2"
       filters:
         multiply: 0.75
     active_power_1:
-      name: "${friendly_name} Load - Power 1"
+      name: "Load - Power 1"
+      id: cse_power_1
       filters:
         multiply: 0.75
     active_power_2:
-      name: "${friendly_name} Load - Power 2"
+      name: "Load - Power 2"
+      id: cse_power_2
       filters:
         multiply: 0.75
-    update_interval: 15s
+    update_interval: 30s
 
+  - platform: total_daily_energy
+    name: "Load - Energy 1"
+    power_id: cse_power_1
+    unit_of_measurement: 'kWh'
+    state_class: total_increasing
+    device_class: energy
+    accuracy_decimals: 2
+    filters:
+      # Multiplication factor from W to kW is 0.001
+      - multiply: 0.001
+      - throttle: 60s
+      
+  - platform: total_daily_energy
+    name: "Load - Energy 2"
+    power_id: cse_power_2
+    unit_of_measurement: 'kWh'
+    state_class: total_increasing
+    device_class: energy
+    accuracy_decimals: 2
+    filters:
+      # Multiplication factor from W to kW is 0.001
+      - multiply: 0.001
+      - throttle: 60s
+      
+  - platform: total_daily_energy
+    name: "Load - Energy"
+    power_id: load_power
+    unit_of_measurement: 'kWh'
+    state_class: total_increasing
+    device_class: energy
+    accuracy_decimals: 2
+    filters:
+      # Multiplication factor from W to kW is 0.001
+      - multiply: 0.001
+      - throttle: 60s
+      
   #-------------------------------------------
   # Grid - Current CT-Clamp
   #-------------------------------------------
   - platform: ct_clamp
     sensor: adc_sensor
-    name: "${friendly_name} Grid - Current"
-    update_interval: 5s
+    name: "Grid - Current"
+    update_interval: 15s
     sample_duration: 1s
-    accuracy_decimals: 3
+    accuracy_decimals: 2
     #filters:
       #- calibrate_linear:
       #    method: exact
@@ -701,6 +792,7 @@ sensor:
           method: exact
           datapoints:
             - 0 -> 0
+            - 34 -> 2.1
             - 48 -> 3.18
             - 75 -> 5.00
             - 122 -> 8.14
@@ -727,82 +819,89 @@ sensor:
   # Grid Power - template
   #-------------------------------------------
   - platform: template
-    name: "${friendly_name} Grid - Power"
+    name: "Grid - Power"
     id: grid_power
     lambda: return (id(grid_current).state * id(grid_voltage).state);
     accuracy_decimals: 1
     unit_of_measurement: W
     icon: "mdi:flash"
     update_interval: never
+    device_class: power
 
   #-------------------------------------------
   # Battery Current - template
   #-------------------------------------------
   - platform: template
-    name: "${friendly_name} Battery - Current"
+    name: "Battery - Current"
     id: battery_current
     lambda: return (id(battery_discharging_current).state - id(battery_charging_current).state);
-    accuracy_decimals: 1
+    accuracy_decimals: 0
     unit_of_measurement: A
     icon: "mdi:current-ac"
     update_interval: never
+    device_class: current
 
   #-------------------------------------------
   # Battery Power - template
   #-------------------------------------------
   - platform: template
-    name: "${friendly_name} Battery - Power"
+    name: "Battery - Power"
     id: battery_power
     lambda: return (id(battery_power_discharging).state - id(battery_power_charging).state);
     accuracy_decimals: 0
     unit_of_measurement: W
     icon: "mdi:flash"
     update_interval: never
+    device_class: power
 
   #-------------------------------------------
   # Load Current - template
   #-------------------------------------------
   - platform: template
-    name: "${friendly_name} Load - Current"
+    name: "Load - Current"
     id: load_current
     lambda: return (id(load_power).state / id(load_voltage).state);
     accuracy_decimals: 1
     unit_of_measurement: A
     icon: "mdi:current-ac"
     update_interval: never
+    device_class: current
 
 #-------------------------------------------
 # Total energy - Charge BATTERY
 #-------------------------------------------
   - platform: template
-    name: "${friendly_name} Battery - Power Charging"
+    name: "Battery - Power Charging"
     id: battery_power_charging
     lambda: return (id(battery_charging_current).state * id(battery_voltage).state);
     accuracy_decimals: 0
     unit_of_measurement: W
     icon: "mdi:flash"
-    update_interval: 10s
+    update_interval: 30s
+    device_class: power
 
 #-------------------------------------------
 # Total energy - Discharge BATTERY
 #-------------------------------------------
   - platform: template
-    name: "${friendly_name} Battery - Power Discharging"
+    name: "Battery - Power Discharging"
     id: battery_power_discharging
     lambda: return (id(battery_discharging_current).state * id(battery_voltage).state);
     accuracy_decimals: 0
     unit_of_measurement: W
     icon: "mdi:flash"
-    update_interval: 10s
+    update_interval: 30s
+    device_class: power
 
 #-------------------------------------------
 # Total energy - CHARGE DAILY BATTERY
 #-------------------------------------------
   - platform: total_daily_energy
-    name: "${friendly_name} Battery - Energy Charge"
+    name: "Battery - Energy Charge"
     power_id: battery_power_charging
     filters:
       - multiply: 0.001
+      - throttle: 60s
     unit_of_measurement: kWh
     state_class: total_increasing
     device_class: energy
@@ -812,10 +911,11 @@ sensor:
 # Total energy - DISCHARGE DAILY BATTERY
 #-------------------------------------------
   - platform: total_daily_energy
-    name: "${friendly_name} Battery - Energy Discharge"
+    name: "Battery - Energy Discharge"
     power_id: battery_power_discharging
     filters:
       - multiply: 0.001
+      - throttle: 60s
     unit_of_measurement: kWh
     state_class: total_increasing
     device_class: energy
@@ -825,10 +925,12 @@ sensor:
 # Total energy - DISCHARGE DAILY BATTERY
 #-------------------------------------------
   - platform: total_daily_energy
-    name: "${friendly_name} Solar - Energy"
+    name: "Solar - Energy"
     power_id: solar_power
+    accuracy_decimals: 1
     filters:
       - multiply: 0.001
+      - throttle: 60s
     unit_of_measurement: kWh
     state_class: total_increasing
     device_class: energy
@@ -985,67 +1087,93 @@ sensor:
     # GRID
     #-------------------------------------------
     grid_voltage:
-      name: "${friendly_name} Grid - Voltage"
+      name: "Grid - Voltage"
       id: grid_voltage
       accuracy_decimals: 0
+      device_class: voltage
+      filters:
+        - throttle: 60s
     grid_frequency:
-      name: "${friendly_name} Grid - Frequency"
+      name: "Grid - Frequency"
+      device_class: frequency
       
     #-------------------------------------------
     # LOAD
     #-------------------------------------------
     ac_output_voltage:
-      name: "${friendly_name} Load - Voltage"
+      name: "Load - Voltage"
+      accuracy_decimals: 0
       id: load_voltage
+      device_class: voltage
+      filters:
+        - throttle: 60s
     ac_output_frequency:
-      name: "${friendly_name} Load - Frequency"
+      name: "Load - Frequency"
+      device_class: frequency
+      filters:
+        - throttle: 60s
     ac_output_apparent_power:
-      name: "${friendly_name} Load - Apparent Power"
+      name: "Load - Apparent Power"
       icon: "mdi:flash"
       accuracy_decimals: 0
+      device_class: apparent_power
     ac_output_active_power:
-      name: "${friendly_name} Load - Power"
+      name: "Load - Power"
       icon: "mdi:flash"
+      device_class: power
       id: load_power
       on_value: 
         then:
           - component.update: load_current
     output_load_percent:
-      name: "${friendly_name} Load - Percent"
+      name: "Load - Percent"
       
     #-------------------------------------------
     # BUS
     #-------------------------------------------
     bus_voltage:
-      name: "${friendly_name} BUS - Voltage"
+      name: "BUS - Voltage"
       accuracy_decimals: 0
+      device_class: voltage
+      filters:
+        - throttle: 60s
       
     #-------------------------------------------
     # BATTERY
     #-------------------------------------------
     battery_voltage:
-      name: "${friendly_name} Battery - Voltage"
+      name: "Battery - Voltage"
       id: battery_voltage
+      device_class: voltage
+      unit_of_measurement: V
     battery_charging_current:
-      name: "${friendly_name} Battery - Current Charging"
+      name: "Battery - Current Charging"
       id: battery_charging_current
+      accuracy_decimals: 0
+      device_class: current
       on_value: 
         then:
           - component.update: battery_current
           - component.update: battery_power
     battery_discharge_current:
-      name: "${friendly_name} Battery - Current Discharge"
+      name: "Battery - Current Discharge"
       id: battery_discharging_current
+      accuracy_decimals: 0
+      device_class: current
       on_value: 
         then:
           - component.update: battery_current
           - component.update: battery_power
     battery_capacity_percent:
-      name: "${friendly_name} Battery"
+      name: "Battery"
       icon: mdi:battery
       entity_category: diagnostic
-    battery_voltage_scc:
-      name: "${friendly_name} Battery - Voltage SCC"
+      device_class: battery
+      filters:
+        - throttle: 60s
+    #battery_voltage_scc:
+    #  name: "${friendly_name} Battery - Voltage SCC"
+    #  device_class: voltage
     #battery_voltage_offset_for_fans_on:
     #  name: "${friendly_name} Battery - voltage_offset_for_fans_on"
       
@@ -1053,9 +1181,11 @@ sensor:
     # TEMPERATURE
     #-------------------------------------------
     inverter_heat_sink_temperature:
-      name: "${friendly_name} Temperature - Invertor"
+      name: "Temperature - Invertor"
       entity_category: diagnostic
-
+      device_class: temperature
+      filters:
+        - throttle: 60s
     #-------------------------------------------
     # NOT SUPPORT ON THIS INVERTOR
     #-------------------------------------------
@@ -1078,14 +1208,22 @@ sensor:
     #  name: "${friendly_name} Solar - Current"
     
     pv_input_voltage:
-      name: "${friendly_name} Solar - Voltage"
+      name: "Solar - Voltage"
       id: solar_voltage
+      device_class: voltage
+      filters:
+        - throttle: 10s
     pv_charging_power:
-      name: "${friendly_name} Solar - Power"
+      name: "Solar - Power"
+      accuracy_decimals: 0
       id: solar_power
-
+      device_class: power
+      filters:
+        - throttle: 10s
+      
   - platform: template
-    name: "${friendly_name} Solar - Current"
+    name: "Solar - Current"
+    device_class: current
     lambda: |-
       if (id(solar_power).state == 0 && id(solar_power).state == 0) { return 0; }
       else { return (id(solar_power).state / id(solar_voltage).state); }
@@ -1107,11 +1245,11 @@ sensor:
     # Battery - Disharge Percent
     #-------------------------------------------
   - platform: template
-    name: "${friendly_name} Battery - Disharge Percent"
+    name: "Battery - Disharge Percent"
     lambda: return ((id(battery_power_discharging).state / ($battery_capacite / 100)) * (-1));
     accuracy_decimals: 1
     unit_of_measurement: "%/hr"
-    update_interval: 10s
+    update_interval: 30s
     icon: "mdi:battery-arrow-down"
 
 #-------------------------------------------
@@ -1137,16 +1275,17 @@ text_sensor:
     # Shutdown mode | D
     #-------------------------------------------
     device_mode:
-      name: "${friendly_name} device_mode"
+      name: "device_mode"
       internal: true
       id: device_mode
       on_value:
         then:
-          component.update: device_mode_text
+          - component.update: device_mode_text
+          #- component.update: battery_mode
 
   - platform: template
     id: device_mode_text
-    name: "${friendly_name} Device mode"
+    name: "Device mode"
     lambda: |-
       if      (id(device_mode).state == "P") { return {"Power on"}; }
       else if (id(device_mode).state == "S") { return {"Standby"} ; }
@@ -1174,19 +1313,20 @@ text_sensor:
   #-------------------------------------------
   - platform: template
     id: battery_type_text
-    name: "${friendly_name} Battery - Type"
+    name: "Battery - Type"
     lambda: |-
       return {"Loading"};
     icon: mdi:battery-high
     update_interval: never
     entity_category: diagnostic
+    internal: true
 
   #-------------------------------------------
   # FAULT AND WARNING
   #-------------------------------------------
   - platform: template
     id: fault
-    name: "${friendly_name} Fault"
+    name: "Fault"
     lambda: |-
       if      (id(fault_bus_over).state)                  { return {"Fault - 08 Bus over"}; }
       else if (id(fault_bus_under).state)                 { return {"Fault - 52 Bus under"}; }
@@ -1245,28 +1385,42 @@ text_sensor:
 #-------------------------------------------
 binary_sensor:
   #-------------------------------------------
+  # Battery/Line mode
+  #-------------------------------------------
+  - platform: template
+    name: "Battery - Mode"
+    id: battery_mode
+    icon: "mdi:home-battery"
+    entity_category: diagnostic
+    lambda: |-
+      if      (id(device_mode).state == "B") { return {"True"}; }
+      else                                   { return {"False"} ; }
+
+  #-------------------------------------------
   # Battery Fuse Reed magnetic sensor
   #-------------------------------------------
-  - platform: gpio
-    name: "${friendly_name} Battery - Fuse"
-    pin: 
-      number: "$pin_reed1"
+  #- platform: gpio
+  #  name: "${friendly_name} Battery - Fuse"
+  #  pin: 
+  #    number: "$pin_reed1"
       #mode: INPUT_PULLUP
-    device_class: door
-    #filters:
-    #  - delayed_on: 5s
-    id: reed
-    icon: mdi:fuse
-    entity_category: diagnostic
-    on_press:
-      then:
-        - rtttl.play: 'siren:d=8,o=5,b=100:d,e,d,e,d,e,d,e'
+  #  device_class: door
+  #  filters:
+  #    - delayed_on_off: 1s
+  #  id: reed
+  #  icon: mdi:fuse
+  #  entity_category: diagnostic
+  #  on_press:
+  #    then:
+  #      - rtttl.play: 'siren:d=8,o=5,b=100:d,e,d,e,d,e,d,e'
+
   #-------------------------------------------
   # Button 1
   #-------------------------------------------
   - platform: gpio
-    name: "${friendly_name} Button 1"
+    name: "Button 1"
     pin: "$pin_button1"
+    internal: true
     id: button1
     filters:
       - invert:
@@ -1281,8 +1435,9 @@ binary_sensor:
   # Button 2
   #-------------------------------------------
   - platform: gpio
-    name: "${friendly_name} Button 2"
+    name: "Button 2"
     pin: "$pin_button2"
+    internal: true
     id: button2
     filters:
       - invert:
@@ -1297,8 +1452,9 @@ binary_sensor:
   # Button 3
   #-------------------------------------------
   - platform: gpio
-    name: "${friendly_name} Button 3"
+    name: "Button 3"
     pin: "$pin_button3"
+    internal: true
     id: button3
     filters:
       - invert:
@@ -1313,8 +1469,9 @@ binary_sensor:
   # Button 4
   #-------------------------------------------
   - platform: gpio
-    name: "${friendly_name} Button 4"
+    name: "Button 4"
     pin: "$pin_button4"
+    internal: true
     id: button4
     filters:
       - invert:
@@ -1331,11 +1488,11 @@ binary_sensor:
   - platform: gpio
     pin: 
       number: "$pin_pir"
-    name: "${friendly_name} Motion"
+    name: "Motion"
     id: motion
     device_class: motion
     filters:
-      - delayed_off: 15s
+      - delayed_off: 30s
 
   #-------------------------------------------
   # PIP SOLAR - BINARY_SENSORS
@@ -1356,30 +1513,30 @@ binary_sensor:
     #  name: "${friendly_name} scc_firmware_version"
     # b4
     load_status:
-      name: "${friendly_name} Status - Load"
+      name: "Status - Load"
       entity_category: diagnostic
     # b3: false
     #battery_voltage_to_steady_while_charging:
     #  name: "${friendly_name} battery_voltage_to_steady_while_charging"
     # b2
     charging_status:
-      name: "${friendly_name} Status - Charging"
+      name: "Status - Charging"
       entity_category: diagnostic
     # b1
     scc_charging_status:
-      name: "${friendly_name} Status - DC Charging"
+      name: "Status - DC Charging"
       entity_category: diagnostic
     # b0
     ac_charging_status:
-      name: "${friendly_name} Status - AC Charging"
+      name: "Status - AC Charging"
       entity_category: diagnostic
     # b10
     charging_to_floating_mode:
-      name: "${friendly_name} Status - Float Charging"
+      name: "Status - Float Charging"
       entity_category: diagnostic
     # b9  
     switch_on:
-      name: "${friendly_name} Switch On"
+      name: "Switch On"
       entity_category: diagnostic
 
     #-------------------------------------------
@@ -1404,8 +1561,9 @@ binary_sensor:
     #  name: "${friendly_name} Fault Code"
 
     power_saving:
-      name: "${friendly_name} Power Saving"
+      name: "Power Saving"
       entity_category: diagnostic
+      internal: true
 
     #-------------------------------------------
     # NOT SUPPORT ON THIS INVERTOR
@@ -1424,17 +1582,19 @@ binary_sensor:
     # FAULT AND WARNING
     #-------------------------------------------
     warnings_present:
-      name: "${friendly_name} Warnings"
+      name: "Warnings"
       entity_category: diagnostic
       icon: mdi:alert-outline
+      #internal: true
       on_state:
         then:
           component.update: fault
     
     faults_present:
-      name: "${friendly_name} Faults"
+      name: "Faults"
       entity_category: diagnostic
       icon: mdi:alert-outline
+      #internal: true
       on_state:
         then:
           component.update: fault
@@ -1586,7 +1746,7 @@ light:
   # LED 1
   #-------------------------------------------
   - platform: binary
-    name: "${friendly_name} Led 1"
+    name: "Led 1"
     output: led1_output
     id: light_led1
     restore_mode: RESTORE_DEFAULT_ON
@@ -1596,7 +1756,7 @@ light:
   # LED 2
   #-------------------------------------------
   - platform: binary
-    name: "${friendly_name} Led 2"
+    name: "Led 2"
     output: led2_output
     id: light_led2
     restore_mode: RESTORE_DEFAULT_ON
@@ -1606,7 +1766,7 @@ light:
   # LED 3
   #-------------------------------------------
   - platform: binary
-    name: "${friendly_name} Led 3"
+    name: "Led 3"
     output: led3_output
     id: light_led3
     restore_mode: RESTORE_DEFAULT_ON
@@ -1616,7 +1776,7 @@ light:
   # LED 4
   #-------------------------------------------
   - platform: binary
-    name: "${friendly_name} Led 4"
+    name: "Led 4"
     output: led4_output
     id: light_led4
     restore_mode: RESTORE_DEFAULT_ON
@@ -1626,11 +1786,12 @@ light:
 # SWITCHES
 #-------------------------------------------
 switch:
+  
   #-------------------------------------------
   # LCD BACKLIGHT
   #-------------------------------------------
   - platform: template
-    name: "${friendly_name} Backlight - LCD"
+    name: "Backlight - LCD"
     id: backlight_lcd
     optimistic: True
     entity_category: config
@@ -1648,7 +1809,7 @@ switch:
   # RELAY 1
   #-------------------------------------------
   - platform: gpio
-    name: "${friendly_name} Relay 1 - Grid"
+    name: "Relay 1 - Grid"
     pin: $pin_relay1
     icon: mdi:transmission-tower
     id: relay_1
@@ -1663,7 +1824,7 @@ switch:
   # RELAY 2
   #-------------------------------------------
   - platform: gpio
-    name: "${friendly_name} Relay 2 - House"
+    name: "Relay 2 - House"
     pin: $pin_relay2
     id: relay_2
     restore_mode: RESTORE_DEFAULT_ON
@@ -1677,7 +1838,7 @@ switch:
   # RELAY 3
   #-------------------------------------------
   - platform: gpio
-    name: "${friendly_name} Relay 3 - Cellar"
+    name: "Relay 3 - Cellar"
     pin: $pin_relay3
     id: relay_3
     restore_mode: RESTORE_DEFAULT_ON
@@ -1691,7 +1852,7 @@ switch:
   # RELAY 4
   #-------------------------------------------
   - platform: gpio
-    name: "${friendly_name} Relay 4 - Socket"
+    name: "Relay 4 - Socket"
     pin: $pin_relay4
     icon: mdi:power-socket-de
     id: relay_4
@@ -1707,7 +1868,7 @@ switch:
   # Solid state FVE
   #-------------------------------------------
   - platform: gpio
-    name: "${friendly_name} Relay 5 - FVE"
+    name: "Relay 5 - FVE"
     pin: $pin_solid_state
     id: solid_state_fve
     icon: mdi:solar-panel-large
@@ -1731,7 +1892,7 @@ switch:
     # 1: PV input max power will be the sum of the max charged power and loads power.
     #-------------------------------------------
     pv_power_balance:
-      name: "${friendly_name} Solar - Power Balance"
+      name: "Solar - Power Balance"
       icon: mdi:code-tags
       entity_category: config
 
@@ -1740,49 +1901,49 @@ switch:
     #-------------------------------------------
     # x backlight_on
     backlight:
-      name: "${friendly_name} Backlight - Inverter"
+      name: "Backlight - Inverter"
       id: backlight_invertor
       icon: mdi:monitor
       entity_category: config
     # a silence_buzzer_open_buzzer
     buzzer:
-      name: "${friendly_name} Buzzer - Inverter"
+      name: "Buzzer - Inverter"
       icon: mdi:volume-low
       entity_category: config
     # b overload_bypass_function
     # Overload bypass: When enabled, the unit will transfer to line mode if overload occurs in battery mode.
     overload_bypass:
-      name: "${friendly_name} Overload - Bypass"
+      name: "Overload - Bypass"
       icon: mdi:thermometer-alert
       entity_category: config
     # k lcd_escape_to_default
     lcd_default:
-      name: "${friendly_name} LCD - Default"
+      name: "LCD - Default"
       icon: mdi:monitor-edit
       entity_category: config
     # u overload_restart_function
     overload_restart:
-      name: "${friendly_name} Overload - Restart"
+      name: "Overload - Restart"
       icon: mdi:alert-outline
       entity_category: config
     # v over_temperature_restart_function
     over_temperature:
-      name: "${friendly_name} Over - Temperature"
+      name: "Over - Temperature"
       icon: mdi:thermometer-alert
       entity_category: config
     # y alarm_on_when_primary_source_interrupt
     alarm_primary_interrupt:
-      name: "${friendly_name} Alarm - primary interrupt"
+      name: "Alarm - primary interrupt"
       icon: mdi:alert-outline
       entity_category: config
     # z fault_code_record
     fault_record:
-      name: "${friendly_name} Fault Code Record"
+      name: "Fault Code Record"
       icon: mdi:thermometer-alert
       entity_category: config
     # j power_saving
     power_saving:
-      name: "${friendly_name} Power Saving"
+      name: "Power Saving"
       icon: mdi:battery-heart-outline
       entity_category: config
 
@@ -1827,7 +1988,7 @@ number:
   # Buzzer Volume
   #-------------------------------------------
   - platform: template
-    name: "${friendly_name} Buzzer - ESP"
+    name: "Buzzer - ESP"
     optimistic: true
     min_value: 0.4
     max_value: 1.0
@@ -1943,7 +2104,7 @@ select:
     name: Battery - Voltage Back
     id: set_back
     optimistic: True
-    initial_option: "28.0"
+    initial_option: "27.5"
     restore_value: true
     entity_category: config
     on_value:
@@ -1963,7 +2124,7 @@ select:
     name: Battery - Voltage Absorption
     id: set_absorption
     optimistic: True
-    initial_option: "29.0"
+    initial_option: "27.8"
     restore_value: true
     entity_category: config
     on_value:
@@ -2004,7 +2165,7 @@ select:
     name: Battery - Voltage Under
     id: set_under
     optimistic: True
-    initial_option: "21.7"
+    initial_option: "21.8"
     restore_value: true
     entity_category: config
     on_value:
@@ -2047,7 +2208,7 @@ select:
     
     charging_discharging_control:
       entity_category: config
-      name: "${friendly_name} charging discharging control"
+      name: "charging discharging control"
       optionsmap:
         "On C/D": "PBATCD111"
         "On C only solar 2A AC/Off D/Invertor off": "PBATCD011"
@@ -2074,7 +2235,7 @@ select:
     pipsolar_id: effekta_ax
     output_source_priority:
       id: effekta_ax_output_source_priority_select
-      name: "${friendly_name} Source Priority - Output"
+      name: "Source Priority - Output"
       entity_category: config
       optionsmap:
         "Utility first": "POP00"
@@ -2091,7 +2252,7 @@ select:
   - platform: pipsolar
     pipsolar_id: effekta_ax
     charger_source_priority:
-      name: "${friendly_name} Source Priority - Charge"
+      name: "Source Priority - Charge"
       entity_category: config
       optionsmap:
         "Utility first": "PCP00"
@@ -2102,7 +2263,7 @@ select:
         "0": "Utility first"
         "1": "Solar first"
         "2": "Solar and utility"
-        "3": "Solar only"
+        "3": "Solar charging only"
 
   #-------------------------------------------
   # Charger Grid Current
@@ -2110,7 +2271,7 @@ select:
   - platform: pipsolar
     pipsolar_id: effekta_ax
     current_max_ac_charging_current:
-      name: "${friendly_name} Charge - Current Grid"
+      name: "Charge - Current Grid"
       entity_category: config
       optionsmap:
         #"2A": "MUCHGC0002"
@@ -2147,7 +2308,7 @@ select:
   - platform: pipsolar
     pipsolar_id: effekta_ax
     current_max_charging_current:
-      name: ${friendly_name} Charge - Current Solar
+      name: Charge - Current Solar
       entity_category: config
       optionsmap:
         "10A": "MCHGC0010"
@@ -2207,7 +2368,7 @@ display:
     update_interval: 5s
     #rotation: 90
     user_characters:
-# LIGHTINING
+# LIGHTNING
       - position: 0 # \x08
         data: #ARROW UP
           - 0b00001
@@ -2266,18 +2427,18 @@ display:
     lambda: |-
       //38.2°C 38% AIQ4 W
       //1000/1000W 24.7V
-
+      
       //--------------------------------------------------------------------------
       // TEMPERATURE
       //--------------------------------------------------------------------------
       // TEMP
       it.printf(0, 0, "%.1fC|%.0f%%", id(aht21_temperature).state, id(aht21_humidity).state);
-
+       
       //--------------------------------------------------------------------------
       // AIQ
       //--------------------------------------------------------------------------
       it.printf(10, 0, isnan(id(aqi_index).state) ? "AQI0" : "AQI%.0f", id(aqi_index).state);
-
+      
       //--------------------------------------------------------------------------
       // LIGHTININHG
       //--------------------------------------------------------------------------
@@ -2293,6 +2454,6 @@ display:
       else {                                              it.printf(15, 0, "\x07"); }
 
       //--------------------------------------------------------------------------
-      // ELEXTRICITY
+      // ELECTRICITY
       //--------------------------------------------------------------------------
       it.printf(0, 1, "%.0f/%.0fW|%.1fV", id(solar_power).state, id(load_power).state, id(battery_voltage).state);
